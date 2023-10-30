@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <glm/fwd.hpp>
 #include <iostream>
 #include <random>
 #include <ranges>
@@ -227,7 +228,7 @@ protected:
    */
   [[nodiscard]] int create_compute_pipeline() {
     // Load & Create Shader Modules (1/3)
-    const auto compute_shader_code = readFile("shaders/morton32.spv");
+    const auto compute_shader_code = readFile("shaders/debug.spv");
     const auto compute_module = create_shader_module(compute_shader_code);
 
     if (compute_module == VK_NULL_HANDLE) {
@@ -415,7 +416,6 @@ protected:
     }
 
     // Print all alloc_info info
-    // if(std::any())
     if (allocations[0] == VK_NULL_HANDLE || allocations[1] == VK_NULL_HANDLE) {
       std::cout << "failed to allocate buffer\n";
       return -1;
@@ -592,10 +592,10 @@ int main() {
     std::cout << "Output:\n";
     for (size_t i = 0; i < 10; ++i) {
 
-      const auto code = PointToCode32(h_data2[i].x, h_data2[i].y, h_data2[i].z,
-                                      0.0f, 1024.0f);
+      const auto code = Debug(h_data2[i]);
 
-      std::cout << i << ":\t" << output_data[i] << '\t' << code << '\n';
+      std::cout << i << ":\t" << h_data2[i] << "\t" << output_data[i] << '\t'
+                << code << '\n';
     }
   }
 
