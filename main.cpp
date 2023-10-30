@@ -1,11 +1,14 @@
 #include <array>
+#include <cstring>
 #include <iostream>
 #include <vector>
-#include <vulkan/vulkan_core.h>
 
 #include "VkBootstrap.h"
-#include "file_reader.hpp"
 #include "vma_usage.h"
+#include <glm/glm.hpp>
+#include <vulkan/vulkan_core.h>
+
+#include "file_reader.hpp"
 
 constexpr auto kN = 1024;
 
@@ -34,8 +37,10 @@ public:
 
   void run(const std::vector<float> &input_data) {
     VkCheck(create_storage_buffer());
-    VkCheck(write_data_to_buffer(input_data.data(), input_data.size()));
     VkCheck(create_descriptor_set(buffer));
+
+    VkCheck(write_data_to_buffer(input_data.data(), input_data.size()));
+
     VkCheck(execute(input_data));
   }
 
@@ -48,6 +53,7 @@ protected:
    * @return int
    */
   [[nodiscard]] int device_initialization() {
+    // Vulkan instance creation (1/3)
     vkb::InstanceBuilder instance_builder;
     auto inst_ret = instance_builder.set_app_name("Example Vulkan Application")
                         .request_validation_layers()
@@ -61,11 +67,13 @@ protected:
 
     instance = inst_ret.value();
 
+    // Vulkan pick physical device (2/3)
     vkb::PhysicalDeviceSelector selector{instance};
     auto phys_ret =
         selector.defer_surface_initialization()
-            .set_minimum_version(1, 1) // require a vulkan 1.1 capable device
-            .require_separate_compute_queue()
+            .set_minimum_version(1, 2)
+            .prefer_gpu_device_type(vkb::PreferredDeviceType::integrated)
+            .allow_any_gpu_device_type(false)
             .select();
 
     if (!phys_ret) {
@@ -76,6 +84,7 @@ protected:
     std::cout << "selected GPU: " << phys_ret.value().properties.deviceName
               << '\n';
 
+    // Vulkan logical device creation (3/3)
     vkb::DeviceBuilder device_builder{phys_ret.value()};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
@@ -96,7 +105,7 @@ protected:
    * @return VkShaderModule shader module handle
    */
   [[nodiscard]] VkShaderModule
-  CreateShaderModule(const std::vector<char> &code) {
+  create_shader_module(const std::vector<char> &code) {
     const VkShaderModuleCreateInfo create_info{
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = code.size(),
@@ -135,13 +144,16 @@ protected:
   void vma_initialization() {
     constexpr VmaVulkanFunctions vulkan_functions = {
         .vkGetInstanceProcAddr = &vkGetInstanceProcAddr,
-        .vkGetDeviceProcAddr = &vkGetDeviceProcAddr};
+        .vkGetDeviceProcAddr = &vkGetDeviceProcAddr,
+    };
 
     const VmaAllocatorCreateInfo allocator_create_info = {
         .physicalDevice = device.physical_device,
         .device = device.device,
         .pVulkanFunctions = &vulkan_functions,
-        .instance = instance.instance};
+        .instance = instance.instance,
+    };
+
     vmaCreateAllocator(&allocator_create_info, &allocator);
   }
 
@@ -151,9 +163,17 @@ protected:
    * @return int
    */
   [[nodiscard]] int create_descriptor_set_layout() {
-    const std::array<VkDescriptorSetLayoutBinding, 1> binding{
+    const std::array<VkDescriptorSetLayoutBinding, 2> binding{
+        // input
         VkDescriptorSetLayoutBinding{
             .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        // output
+        VkDescriptorSetLayoutBinding{
+            .binding = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -203,7 +223,7 @@ protected:
   [[nodiscard]] int create_compute_pipeline() {
     // Load & Create Shader Modules (1/3)
     const auto compute_shader_code = readFile("shaders/square.spv");
-    const auto compute_module = CreateShaderModule(compute_shader_code);
+    const auto compute_module = create_shader_module(compute_shader_code);
 
     if (compute_module == VK_NULL_HANDLE) {
       std::cout << "failed to create shader module\n";
@@ -285,14 +305,14 @@ protected:
    * @return int
    */
   [[nodiscard]] int create_descriptor_set(const VkBuffer &buffer) {
-    const VkDescriptorSetAllocateInfo alloc_info{
+    const VkDescriptorSetAllocateInfo set_alloc_info{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = descriptor_pool,
         .descriptorSetCount = 1,
         .pSetLayouts = &descriptor_set_layout,
     };
 
-    if (disp.allocateDescriptorSets(&alloc_info, &descriptor_set) !=
+    if (disp.allocateDescriptorSets(&set_alloc_info, &descriptor_set) !=
         VK_SUCCESS) {
       std::cout << "failed to allocate descriptor set\n";
       return -1;
@@ -325,24 +345,53 @@ protected:
    * @return int
    */
   [[nodiscard]] int create_storage_buffer() {
-    constexpr VkBufferCreateInfo buffer_info = {
+    // Checkout
+    // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
+    //  It will then prefer a memory type that is both DEVICE_LOCAL and
+    //  HOST_VISIBLE (integrated memory or BAR)
+    constexpr VmaAllocationCreateInfo alloc_create_info{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                 VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
+                 VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+    };
+
+    constexpr VkBufferCreateInfo buffer_create_info{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = kN * sizeof(float),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
     };
 
-    constexpr VmaAllocationCreateInfo alloc_info{
-        .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
-        .requiredFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-    };
+    vmaCreateBuffer(allocator, &buffer_create_info, &alloc_create_info, &buffer,
+                    &allocation, &alloc_info);
 
-    // VmaAllocation allocation;
-    vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer, &allocation,
-                    nullptr);
+    // Print all alloc_info info
+    std::cout << "alloc_info: " << std::endl;
+    std::cout << "size: " << alloc_info.size << std::endl;
+    std::cout << "offset: " << alloc_info.offset << std::endl;
+    std::cout << "memoryType: " << alloc_info.memoryType << std::endl;
+    std::cout << "mappedData: " << alloc_info.pMappedData << std::endl;
+    std::cout << "deviceMemory: " << alloc_info.deviceMemory << std::endl;
 
+    if (allocation == VK_NULL_HANDLE) {
+      std::cout << "failed to allocate buffer\n";
+      return -1;
+    }
+
+    // Check if the memory is host visible
+    VkMemoryPropertyFlags memPropFlags;
+    vmaGetAllocationMemoryProperties(allocator, allocation, &memPropFlags);
+
+    if (memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+      std::cout << "host visible" << std::endl;
+    } else {
+      std::cout << "not host visible" << std::endl;
+      return -1;
+    }
     return 0;
   }
 
@@ -355,10 +404,7 @@ protected:
    */
   int write_data_to_buffer(const float *h_data, const size_t n) {
     assert(n * sizeof(float) == kN * sizeof(float));
-    void *mapped_memory = nullptr;
-    vmaMapMemory(allocator, allocation, &mapped_memory);
-    memcpy(mapped_memory, h_data, n * sizeof(float));
-    vmaUnmapMemory(allocator, allocation);
+    memcpy(alloc_info.pMappedData, h_data, sizeof(float) * n);
     return 0;
   }
 
@@ -373,14 +419,14 @@ protected:
 
     // -------
 
-    const VkCommandBufferAllocateInfo alloc_info{
+    const VkCommandBufferAllocateInfo buffer_alloc_info{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = command_pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
 
-    if (disp.allocateCommandBuffers(&alloc_info, &command_buffer) !=
+    if (disp.allocateCommandBuffers(&buffer_alloc_info, &command_buffer) !=
         VK_SUCCESS) {
       std::cout << "failed to allocate command buffers\n";
       return -1;
@@ -425,19 +471,26 @@ protected:
       throw std::runtime_error("failed to wait queue idle!");
 
     // copy data from GPU to CPU
-    std::vector<float> output_data(kN);
+    // std::vector<float> output_data(kN);
 
-    void *mapped_data;
-    vmaMapMemory(allocator, allocation, &mapped_data);
-    memcpy(output_data.data(), mapped_data, kN * sizeof(float));
-    vmaUnmapMemory(allocator, allocation);
+    auto downloadedData = reinterpret_cast<float *>(alloc_info.pMappedData);
+
+    downloadedData[3] = 8.0f;
+
+    // void *mapped_data;
+    // vmaMapMemory(allocator, allocation, &mapped_data);
+    // memcpy(output_data.data(), mapped_data, kN * sizeof(float));
+    // vmaUnmapMemory(allocator, allocation);
+
+    // memcpy(output_data.data(), alloc_info.pMappedData, kN * sizeof(float));
+
     // -------
 
     std::cout << "output data:\n";
-    for (size_t i = 0; i < output_data.size(); ++i) {
+    for (size_t i = 0; i < kN; ++i) {
       if (i % 64 == 0 && i != 0)
         std::cout << '\n';
-      std::cout << output_data[i];
+      std::cout << downloadedData[i];
     }
     std::cout << '\n';
     return 0;
@@ -463,7 +516,7 @@ protected:
     destroy_instance(instance);
   }
 
-private:
+public:
   // struct {
   vkb::Instance instance;
   std::vector<const char *> enabled_extensions;
@@ -474,6 +527,9 @@ private:
   VmaAllocation allocation;
   // potentially VkDeviceMemory and VkDeviceSize here, but was handled by VMA
   VkBuffer buffer;
+
+  VmaAllocationInfo alloc_info;
+
   // uint8_t *mapped_data{nullptr};
   // bool persistent{false}; // Whether the buffer is persistently mapped or
   // not
@@ -505,18 +561,18 @@ private:
   VkPipeline compute_pipeline;
   // std::vector<VkShaderModule*> shader_modules;
 
-
   // The shader resources that this pipeline layout uses, indexed by their name
   // A map of each set and the resources it owns used by the pipeline layout
   // The different descriptor set layouts for this pipeline layout
-
 };
 
 int main() {
-  const std::vector h_data(kN, 2.0f);
+  const std::vector h_data(kN, 1.0f);
+  const std::vector h_data2(kN, glm::vec3(1.0f, 2.0f, 3.0f));
 
   ComputeEngine engine;
   engine.init();
+
   engine.run(h_data);
   engine.teardown();
 
