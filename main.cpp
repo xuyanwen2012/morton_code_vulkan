@@ -1,6 +1,9 @@
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <iostream>
+#include <random>
+#include <ranges>
 #include <vector>
 
 #include "VkBootstrap.h"
@@ -41,7 +44,7 @@ public:
 
     VkCheck(write_data_to_buffer(input_data.data(), input_data.size()));
 
-    VkCheck(execute(input_data));
+    VkCheck(execute_sync(input_data));
   }
 
   void teardown() { cleanup(); }
@@ -408,25 +411,15 @@ protected:
     return 0;
   }
 
-  int execute(const std::vector<float> &input_data) {
-    std::cout << "input data:\n";
-    for (size_t i = 0; i < input_data.size(); ++i) {
-      if (i % 64 == 0 && i != 0)
-        std::cout << '\n';
-      std::cout << input_data[i];
-    }
-    std::cout << '\n';
-
-    // -------
-
-    const VkCommandBufferAllocateInfo buffer_alloc_info{
+  [[nodiscard]] int execute_sync(const std::vector<float> &input_data) {
+    const VkCommandBufferAllocateInfo cmd_buf_alloc_info{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = command_pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
 
-    if (disp.allocateCommandBuffers(&buffer_alloc_info, &command_buffer) !=
+    if (disp.allocateCommandBuffers(&cmd_buf_alloc_info, &command_buffer) !=
         VK_SUCCESS) {
       std::cout << "failed to allocate command buffers\n";
       return -1;
@@ -444,14 +437,14 @@ protected:
                                compute_pipeline_layout, 0, 1, &descriptor_set,
                                0, nullptr);
 
+    // equvalent to CUDA's number of blocks
     constexpr auto group_count_x =
         static_cast<uint32_t>(InputSize() / ComputeShaderProcessUnit());
     disp.cmdDispatch(command_buffer, group_count_x, 1, 1);
 
     disp.endCommandBuffer(command_buffer);
 
-    // -------
-
+    // ------- SUBMIT COMMAND BUFFER --------
     const VkSubmitInfo submit_info{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 0,
@@ -467,32 +460,10 @@ protected:
     }
 
     // wait the calculation to finish
-    if (vkQueueWaitIdle(compute_queue) != VK_SUCCESS)
+    if (vkQueueWaitIdle(compute_queue) != VK_SUCCESS) {
       throw std::runtime_error("failed to wait queue idle!");
-
-    // copy data from GPU to CPU
-    // std::vector<float> output_data(kN);
-
-    auto downloadedData = reinterpret_cast<float *>(alloc_info.pMappedData);
-
-    downloadedData[3] = 8.0f;
-
-    // void *mapped_data;
-    // vmaMapMemory(allocator, allocation, &mapped_data);
-    // memcpy(output_data.data(), mapped_data, kN * sizeof(float));
-    // vmaUnmapMemory(allocator, allocation);
-
-    // memcpy(output_data.data(), alloc_info.pMappedData, kN * sizeof(float));
-
-    // -------
-
-    std::cout << "output data:\n";
-    for (size_t i = 0; i < kN; ++i) {
-      if (i % 64 == 0 && i != 0)
-        std::cout << '\n';
-      std::cout << downloadedData[i];
     }
-    std::cout << '\n';
+
     return 0;
   }
 
@@ -517,39 +488,24 @@ protected:
   }
 
 public:
-  // struct {
   vkb::Instance instance;
-  std::vector<const char *> enabled_extensions;
-  //};
 
   // Buffer related
-  // struct {
   VmaAllocation allocation;
-  // potentially VkDeviceMemory and VkDeviceSize here, but was handled by VMA
   VkBuffer buffer;
 
   VmaAllocationInfo alloc_info;
 
-  // uint8_t *mapped_data{nullptr};
-  // bool persistent{false}; // Whether the buffer is persistently mapped or
-  // not
-  // bool mapped{false}; // Whether the buffer has been mapped with
-  // vmaMapMemory
-  //};
-
   // Device Related
-  // struct {
   vkb::Device device;
   VmaAllocator allocator;
   vkb::DispatchTable disp;
-  // queues (vector of queues)
-  VkQueue compute_queue;
+  VkQueue compute_queue; // queues (vector of queues)
   // Potentially fence poll here
 
   // Command Related
   VkCommandPool command_pool;
   VkCommandBuffer command_buffer;
-  //};
 
   // Compute Related
   VkDescriptorSetLayout descriptor_set_layout;
@@ -566,16 +522,41 @@ public:
   // The different descriptor set layouts for this pipeline layout
 };
 
+std::ostream &operator<<(std::ostream &os, const glm::vec3 &vec) {
+  os << "(" << vec.x << ", " << vec.y << ", " << vec.z << ")";
+  return os;
+}
+
 int main() {
-  const std::vector h_data(kN, 1.0f);
-  const std::vector h_data2(kN, glm::vec3(1.0f, 2.0f, 3.0f));
+  std::default_random_engine gen(114514);
+  std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
+
+  std::vector<glm::vec3> h_data2(kN);
+  std::ranges::generate(
+      h_data2, [&]() { return glm::vec3(dis(gen), dis(gen), dis(gen)); });
+
+  std::cout << "Input:\n";
+  for (size_t i = 0; i < 10; ++i) {
+    std::cout << h_data2[i] << '\n';
+  }
 
   ComputeEngine engine;
   engine.init();
 
-  engine.run(h_data);
+  // engine.run(h_data);
+
+  if (engine.alloc_info.pMappedData == nullptr) {
+    return EXIT_FAILURE;
+  }
+
+  // -------
+  auto output_data = reinterpret_cast<float *>(engine.alloc_info.pMappedData);
+  std::cout << "Output:\n";
+  for (size_t i = 0; i < 10; ++i) {
+    std::cout << output_data[i] << '\n';
+  }
+
   engine.teardown();
 
-  std::cout << "Exiting normally" << std::endl;
   return EXIT_SUCCESS;
 }
