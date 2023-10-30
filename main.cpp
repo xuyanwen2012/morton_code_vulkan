@@ -586,17 +586,14 @@ int main() {
 
   engine.run(h_data2);
 
-  if (engine.alloc_info.pMappedData == nullptr) {
-    std::cout << "ExitEarly\n";
-    return EXIT_FAILURE;
-  }
-
-  // -------
-  auto output_data =
-      reinterpret_cast<glm::uint *>(engine.alloc_info.pMappedData);
-  std::cout << "Output:\n";
-  for (size_t i = 0; i < 10; ++i) {
-    std::cout << output_data[i] << '\n';
+  if (engine.alloc_info.pMappedData != nullptr) {
+    // -------
+    auto output_data =
+        reinterpret_cast<glm::uint *>(engine.alloc_info.pMappedData);
+    std::cout << "Output:\n";
+    for (size_t i = 0; i < 10; ++i) {
+      std::cout << output_data[i] << '\n';
+    }
   }
 
   engine.teardown();
