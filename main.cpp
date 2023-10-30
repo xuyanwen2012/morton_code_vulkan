@@ -327,13 +327,13 @@ protected:
     }
 
     const VkDescriptorBufferInfo in_buffer_info{
-        .buffer = buffers[0], // in_buffer,
+        .buffer = buffers[0],
         .offset = 0,
         .range = kN * sizeof(glm::vec3),
     };
 
     const VkDescriptorBufferInfo out_buffer_info{
-        .buffer = buffers[0], // out_buffer,
+        .buffer = buffers[0], // why not [1]?
         .offset = 0,
         .range = kN * sizeof(glm::uint),
     };
