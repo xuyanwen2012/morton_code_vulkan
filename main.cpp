@@ -38,13 +38,13 @@ public:
     VkCheck(create_command_pool());
   }
 
-  void run(const std::vector<float> &input_data) {
+  void run(const std::vector<glm::vec3> &input_data) {
     VkCheck(create_storage_buffer());
-    VkCheck(create_descriptor_set(buffer));
+    VkCheck(create_descriptor_set());
 
     VkCheck(write_data_to_buffer(input_data.data(), input_data.size()));
 
-    VkCheck(execute_sync(input_data));
+    VkCheck(execute_sync());
   }
 
   void teardown() { cleanup(); }
@@ -166,6 +166,7 @@ protected:
    * @return int
    */
   [[nodiscard]] int create_descriptor_set_layout() {
+    // First thing to do
     const std::array<VkDescriptorSetLayoutBinding, 2> binding{
         // input
         VkDescriptorSetLayoutBinding{
@@ -183,13 +184,13 @@ protected:
         },
     };
 
-    const VkDescriptorSetLayoutCreateInfo create_info{
+    const VkDescriptorSetLayoutCreateInfo layout_info{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1,
+        .bindingCount = 2,
         .pBindings = binding.data(),
     };
 
-    if (disp.createDescriptorSetLayout(&create_info, nullptr,
+    if (disp.createDescriptorSetLayout(&layout_info, nullptr,
                                        &descriptor_set_layout) != VK_SUCCESS) {
       std::cout << "failed to create descriptor set layout\n";
       return -1;
@@ -225,7 +226,7 @@ protected:
    */
   [[nodiscard]] int create_compute_pipeline() {
     // Load & Create Shader Modules (1/3)
-    const auto compute_shader_code = readFile("shaders/square.spv");
+    const auto compute_shader_code = readFile("shaders/morton32.spv");
     const auto compute_module = create_shader_module(compute_shader_code);
 
     if (compute_module == VK_NULL_HANDLE) {
@@ -248,7 +249,6 @@ protected:
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = nullptr,
     };
-
     if (disp.createPipelineLayout(&layout_create_info, nullptr,
                                   &compute_pipeline_layout) != VK_SUCCESS) {
       std::cout << "failed to create pipeline layout\n";
@@ -263,7 +263,6 @@ protected:
         .basePipelineHandle = VK_NULL_HANDLE,
         .basePipelineIndex = -1,
     };
-
     if (disp.createComputePipelines(VK_NULL_HANDLE, 1, &pipeline_create_info,
                                     nullptr, &compute_pipeline) != VK_SUCCESS) {
       std::cout << "failed to create compute pipeline\n";
@@ -280,17 +279,23 @@ protected:
    * @return int
    */
   [[nodiscard]] int create_descriptor_pool() {
-    constexpr VkDescriptorPoolSize pool_size{
-        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .descriptorCount = 1,
+    constexpr std::array<VkDescriptorPoolSize, 2> pool_sizes{
+        VkDescriptorPoolSize{
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+        },
+        VkDescriptorPoolSize{
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1, // maybe 2?
+        },
     };
 
     // ReSharper disable once CppVariableCanBeMadeConstexpr
     const VkDescriptorPoolCreateInfo create_info{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = 1,
-        .poolSizeCount = 1,
-        .pPoolSizes = &pool_size,
+        .maxSets = 2,
+        .poolSizeCount = 2,
+        .pPoolSizes = pool_sizes.data(),
     };
 
     if (disp.createDescriptorPool(&create_info, nullptr, &descriptor_pool) !=
@@ -307,7 +312,7 @@ protected:
    * @param buffer
    * @return int
    */
-  [[nodiscard]] int create_descriptor_set(const VkBuffer &buffer) {
+  [[nodiscard]] int create_descriptor_set() {
     const VkDescriptorSetAllocateInfo set_alloc_info{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = descriptor_pool,
@@ -321,23 +326,40 @@ protected:
       return -1;
     }
 
-    const VkDescriptorBufferInfo buffer_info{
-        .buffer = buffer,
+    const VkDescriptorBufferInfo in_buffer_info{
+        .buffer = buffers[0], // in_buffer,
         .offset = 0,
-        .range = kN * sizeof(float),
+        .range = kN * sizeof(glm::vec3),
     };
 
-    const VkWriteDescriptorSet write{
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = descriptor_set,
-        .dstBinding = 0,
-        .dstArrayElement = 0,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .pBufferInfo = &buffer_info,
+    const VkDescriptorBufferInfo out_buffer_info{
+        .buffer = buffers[0], // out_buffer,
+        .offset = 0,
+        .range = kN * sizeof(glm::uint),
     };
 
-    disp.updateDescriptorSets(1, &write, 0, nullptr);
+    const std::array<VkWriteDescriptorSet, 2> write{
+        VkWriteDescriptorSet{
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = descriptor_set,
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &in_buffer_info,
+        },
+        VkWriteDescriptorSet{
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = descriptor_set,
+            .dstBinding = 1,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &out_buffer_info,
+        },
+    };
+
+    disp.updateDescriptorSets(2, write.data(), 0, nullptr);
 
     return 0;
   }
@@ -359,9 +381,9 @@ protected:
         .usage = VMA_MEMORY_USAGE_AUTO,
     };
 
-    constexpr VkBufferCreateInfo buffer_create_info{
+    constexpr VkBufferCreateInfo in_buffer_create_info{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = kN * sizeof(float),
+        .size = kN * sizeof(glm::vec3),
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -369,8 +391,21 @@ protected:
         .pQueueFamilyIndices = nullptr,
     };
 
-    vmaCreateBuffer(allocator, &buffer_create_info, &alloc_create_info, &buffer,
-                    &allocation, &alloc_info);
+    constexpr VkBufferCreateInfo out_buffer_create_info{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = kN * sizeof(glm::uint),
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+
+    vmaCreateBuffer(allocator, &in_buffer_create_info, &alloc_create_info,
+                    &buffers[0], &allocations[0], &alloc_info);
+
+    vmaCreateBuffer(allocator, &out_buffer_create_info, &alloc_create_info,
+                    &buffers[1], &allocations[1], &alloc_info);
 
     // Print all alloc_info info
     std::cout << "alloc_info: " << std::endl;
@@ -380,14 +415,14 @@ protected:
     std::cout << "mappedData: " << alloc_info.pMappedData << std::endl;
     std::cout << "deviceMemory: " << alloc_info.deviceMemory << std::endl;
 
-    if (allocation == VK_NULL_HANDLE) {
+    if (allocations[0] == VK_NULL_HANDLE || allocations[1] == VK_NULL_HANDLE) {
       std::cout << "failed to allocate buffer\n";
       return -1;
     }
 
     // Check if the memory is host visible
     VkMemoryPropertyFlags memPropFlags;
-    vmaGetAllocationMemoryProperties(allocator, allocation, &memPropFlags);
+    vmaGetAllocationMemoryProperties(allocator, allocations[0], &memPropFlags);
 
     if (memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
       std::cout << "host visible" << std::endl;
@@ -405,13 +440,13 @@ protected:
    * @param n size of data
    * @return int
    */
-  int write_data_to_buffer(const float *h_data, const size_t n) {
-    assert(n * sizeof(float) == kN * sizeof(float));
-    memcpy(alloc_info.pMappedData, h_data, sizeof(float) * n);
+  int write_data_to_buffer(const glm::vec3 *h_data, const size_t n) {
+    assert(n * sizeof(glm::vec3) == kN * sizeof(glm::vec3));
+    memcpy(alloc_info.pMappedData, h_data, sizeof(glm::vec3) * n);
     return 0;
   }
 
-  [[nodiscard]] int execute_sync(const std::vector<float> &input_data) {
+  [[nodiscard]] int execute_sync() {
     const VkCommandBufferAllocateInfo cmd_buf_alloc_info{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = command_pool,
@@ -472,7 +507,10 @@ protected:
    *
    */
   void cleanup() {
-    vmaDestroyBuffer(allocator, buffer, allocation);
+    for (int i = 0; i < 2; ++i) {
+      vmaDestroyBuffer(allocator, buffers[i], allocations[i]);
+    }
+    // vmaDestroyBuffer(allocator, buffer, allocation);
 
     if (allocator != VK_NULL_HANDLE) {
       vmaDestroyAllocator(allocator);
@@ -491,8 +529,11 @@ public:
   vkb::Instance instance;
 
   // Buffer related
-  VmaAllocation allocation;
-  VkBuffer buffer;
+  // VmaAllocation allocation;
+  std::array<VmaAllocation, 2> allocations;
+  std::array<VkBuffer, 2> buffers;
+
+  // VkBuffer buffer; // (we only had one)
 
   VmaAllocationInfo alloc_info;
 
@@ -543,14 +584,16 @@ int main() {
   ComputeEngine engine;
   engine.init();
 
-  // engine.run(h_data);
+  engine.run(h_data2);
 
   if (engine.alloc_info.pMappedData == nullptr) {
+    std::cout << "ExitEarly\n";
     return EXIT_FAILURE;
   }
 
   // -------
-  auto output_data = reinterpret_cast<float *>(engine.alloc_info.pMappedData);
+  auto output_data =
+      reinterpret_cast<glm::uint *>(engine.alloc_info.pMappedData);
   std::cout << "Output:\n";
   for (size_t i = 0; i < 10; ++i) {
     std::cout << output_data[i] << '\n';
@@ -558,5 +601,6 @@ int main() {
 
   engine.teardown();
 
+  std::cout << "Done\n";
   return EXIT_SUCCESS;
 }

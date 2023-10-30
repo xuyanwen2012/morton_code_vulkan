@@ -2,8 +2,8 @@
 
 layout(local_size_x = 256) in;
 
-layout(std430, binding = 0) buffer InputBuffer { vec3 input_xyz[]; };
-layout(std430, binding = 1) buffer OutputBuffer { uint output_code[]; };
+layout(std430, binding = 0) readonly buffer Input { vec3 input_xyz[]; };
+layout(std430, binding = 1) writeonly buffer Output { uint output_code[]; };
 
 uint expand_bit(uint a) {
   uint x = a & 0x000003FF;
