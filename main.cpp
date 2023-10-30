@@ -12,6 +12,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "file_reader.hpp"
+#include "moton.hpp"
 
 constexpr auto kN = 1024;
 
@@ -333,7 +334,7 @@ protected:
     };
 
     const VkDescriptorBufferInfo out_buffer_info{
-        .buffer = buffers[0], // why not [1]?
+        .buffer = buffers[1], // why not [1]?
         .offset = 0,
         .range = kN * sizeof(glm::uint),
     };
@@ -381,40 +382,40 @@ protected:
         .usage = VMA_MEMORY_USAGE_AUTO,
     };
 
-    constexpr VkBufferCreateInfo in_buffer_create_info{
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = kN * sizeof(glm::vec3),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = nullptr,
+    constexpr std::array<VkBufferCreateInfo, 2> buffer_create_info{
+        VkBufferCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = kN * sizeof(glm::vec3),
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr,
+        },
+        VkBufferCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = kN * sizeof(glm::uint),
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr,
+        },
     };
 
-    constexpr VkBufferCreateInfo out_buffer_create_info{
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = kN * sizeof(glm::uint),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = nullptr,
-    };
-
-    vmaCreateBuffer(allocator, &in_buffer_create_info, &alloc_create_info,
-                    &buffers[0], &allocations[0], &alloc_info);
-
-    vmaCreateBuffer(allocator, &out_buffer_create_info, &alloc_create_info,
-                    &buffers[1], &allocations[1], &alloc_info);
+    for (auto i = 0; i < 2; ++i) {
+      vmaCreateBuffer(allocator, &buffer_create_info[i], &alloc_create_info,
+                      &buffers[i], &allocations[i], &alloc_info[i]);
+      std::cout << "alloc_info: " << i << std::endl;
+      std::cout << "size: " << alloc_info[i].size << std::endl;
+      std::cout << "offset: " << alloc_info[i].offset << std::endl;
+      std::cout << "memoryType: " << alloc_info[i].memoryType << std::endl;
+      std::cout << "mappedData: " << alloc_info[i].pMappedData << std::endl;
+      std::cout << "deviceMemory: " << alloc_info[i].deviceMemory << std::endl;
+    }
 
     // Print all alloc_info info
-    std::cout << "alloc_info: " << std::endl;
-    std::cout << "size: " << alloc_info.size << std::endl;
-    std::cout << "offset: " << alloc_info.offset << std::endl;
-    std::cout << "memoryType: " << alloc_info.memoryType << std::endl;
-    std::cout << "mappedData: " << alloc_info.pMappedData << std::endl;
-    std::cout << "deviceMemory: " << alloc_info.deviceMemory << std::endl;
-
+    // if(std::any())
     if (allocations[0] == VK_NULL_HANDLE || allocations[1] == VK_NULL_HANDLE) {
       std::cout << "failed to allocate buffer\n";
       return -1;
@@ -442,7 +443,7 @@ protected:
    */
   int write_data_to_buffer(const glm::vec3 *h_data, const size_t n) {
     assert(n * sizeof(glm::vec3) == kN * sizeof(glm::vec3));
-    memcpy(alloc_info.pMappedData, h_data, sizeof(glm::vec3) * n);
+    memcpy(alloc_info[0].pMappedData, h_data, sizeof(glm::vec3) * n);
     return 0;
   }
 
@@ -532,10 +533,7 @@ public:
   // VmaAllocation allocation;
   std::array<VmaAllocation, 2> allocations;
   std::array<VkBuffer, 2> buffers;
-
-  // VkBuffer buffer; // (we only had one)
-
-  VmaAllocationInfo alloc_info;
+  std::array<VmaAllocationInfo, 2> alloc_info;
 
   // Device Related
   vkb::Device device;
@@ -586,13 +584,18 @@ int main() {
 
   engine.run(h_data2);
 
-  if (engine.alloc_info.pMappedData != nullptr) {
+  if (engine.alloc_info[1].pMappedData != nullptr) {
     // -------
     auto output_data =
-        reinterpret_cast<glm::uint *>(engine.alloc_info.pMappedData);
+        reinterpret_cast<glm::uint *>(engine.alloc_info[1].pMappedData);
+
     std::cout << "Output:\n";
     for (size_t i = 0; i < 10; ++i) {
-      std::cout << output_data[i] << '\n';
+
+      const auto code = PointToCode32(h_data2[i].x, h_data2[i].y, h_data2[i].z,
+                                      0.0f, 1024.0f);
+
+      std::cout << i << ":\t" << output_data[i] << '\t' << code << '\n';
     }
   }
 
