@@ -17,8 +17,14 @@
 
 constexpr auto kN = 1024;
 
+using InputT = float;
+using OutputT = float;
+
 [[nodiscard]] constexpr uint32_t InputSize() { return kN; }
 [[nodiscard]] constexpr uint32_t ComputeShaderProcessUnit() { return 256; }
+[[nodiscard]] constexpr uint32_t WorkGroupSize() {
+  return InputSize() / ComputeShaderProcessUnit();
+}
 
 inline void VkCheck(const int result) {
   if (result != 0) {
@@ -35,14 +41,14 @@ public:
     vma_initialization();
 
     VkCheck(create_descriptor_set_layout());
-    VkCheck(create_compute_pipeline());
     VkCheck(create_descriptor_pool());
+    VkCheck(create_storage_buffer());
+    VkCheck(create_descriptor_set());
+    VkCheck(create_compute_pipeline());
     VkCheck(create_command_pool());
   }
 
-  void run(const std::vector<glm::vec3> &input_data) {
-    VkCheck(create_storage_buffer());
-    VkCheck(create_descriptor_set());
+  void run(const std::vector<InputT> &input_data) {
 
     VkCheck(write_data_to_buffer(input_data.data(), input_data.size()));
 
@@ -63,6 +69,7 @@ protected:
     auto inst_ret = instance_builder.set_app_name("Example Vulkan Application")
                         .request_validation_layers()
                         .use_default_debug_messenger()
+                        .require_api_version(1, 3, 0) // for SPIR-V 1.3
                         .build();
     if (!inst_ret) {
       std::cerr << "Failed to create Vulkan instance. Error: "
@@ -228,7 +235,7 @@ protected:
    */
   [[nodiscard]] int create_compute_pipeline() {
     // Load & Create Shader Modules (1/3)
-    const auto compute_shader_code = readFile("shaders/debug.spv");
+    const auto compute_shader_code = readFile("shaders/simple.spv");
     const auto compute_module = create_shader_module(compute_shader_code);
 
     if (compute_module == VK_NULL_HANDLE) {
@@ -240,7 +247,15 @@ protected:
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
         .module = compute_module,
-        .pName = "main",
+        .pName = "foo",
+        // .pSpecializationInfo = &tmp_spec_info,
+    };
+
+    // Pushing a single float constant
+    constexpr VkPushConstantRange push_constant{
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = 0,
+        .size = sizeof(float),
     };
 
     // Create a Pipeline Layout (2/3)
@@ -250,7 +265,10 @@ protected:
         .pSetLayouts = &descriptor_set_layout,
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = nullptr,
+        // .pushConstantRangeCount = 1,
+        // .pPushConstantRanges = &push_constant,
     };
+
     if (disp.createPipelineLayout(&layout_create_info, nullptr,
                                   &compute_pipeline_layout) != VK_SUCCESS) {
       std::cout << "failed to create pipeline layout\n";
@@ -265,6 +283,7 @@ protected:
         .basePipelineHandle = VK_NULL_HANDLE,
         .basePipelineIndex = -1,
     };
+
     if (disp.createComputePipelines(VK_NULL_HANDLE, 1, &pipeline_create_info,
                                     nullptr, &compute_pipeline) != VK_SUCCESS) {
       std::cout << "failed to create compute pipeline\n";
@@ -331,13 +350,13 @@ protected:
     const VkDescriptorBufferInfo in_buffer_info{
         .buffer = buffers[0],
         .offset = 0,
-        .range = kN * sizeof(glm::vec3),
+        .range = InputSize() * sizeof(InputT),
     };
 
     const VkDescriptorBufferInfo out_buffer_info{
         .buffer = buffers[1], // why not [1]?
         .offset = 0,
-        .range = kN * sizeof(glm::uint),
+        .range = InputSize() * sizeof(OutputT),
     };
 
     const std::array<VkWriteDescriptorSet, 2> write{
@@ -363,6 +382,40 @@ protected:
 
     disp.updateDescriptorSets(2, write.data(), 0, nullptr);
 
+    // new addition for CLSPV
+    const std::array<VkSpecializationMapEntry, 3> spec_map{
+        VkSpecializationMapEntry{
+            .constantID = 0,
+            .offset = 0,
+            .size = sizeof(uint32_t),
+        },
+        VkSpecializationMapEntry{
+            .constantID = 1,
+            .offset = sizeof(uint32_t),
+            .size = sizeof(uint32_t),
+        },
+        VkSpecializationMapEntry{
+            .constantID = 2,
+            .offset = sizeof(uint32_t) * 2,
+            .size = sizeof(uint32_t),
+        },
+    };
+
+    const std::array<uint32_t, 3> spec_map_content{
+        WorkGroupSize(),
+        1,
+        1,
+    };
+
+    const VkSpecializationInfo spec_info{
+        .mapEntryCount = 1,
+        .pMapEntries = spec_map.data(),
+        .dataSize = sizeof(uint32_t),
+        .pData = spec_map_content.data(),
+    };
+
+    tmp_spec_info = spec_info;
+
     return 0;
   }
 
@@ -386,7 +439,7 @@ protected:
     constexpr std::array<VkBufferCreateInfo, 2> buffer_create_info{
         VkBufferCreateInfo{
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = kN * sizeof(glm::vec3),
+            .size = InputSize() * sizeof(InputT),
             .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -395,7 +448,7 @@ protected:
         },
         VkBufferCreateInfo{
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = kN * sizeof(glm::uint),
+            .size = InputSize() * sizeof(OutputT),
             .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -441,9 +494,8 @@ protected:
    * @param n size of data
    * @return int
    */
-  int write_data_to_buffer(const glm::vec3 *h_data, const size_t n) {
-    assert(n * sizeof(glm::vec3) == kN * sizeof(glm::vec3));
-    memcpy(alloc_info[0].pMappedData, h_data, sizeof(glm::vec3) * n);
+  int write_data_to_buffer(const InputT *h_data, const size_t n) {
+    memcpy(alloc_info[0].pMappedData, h_data, sizeof(InputT) * n);
     return 0;
   }
 
@@ -472,6 +524,11 @@ protected:
     disp.cmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                                compute_pipeline_layout, 0, 1, &descriptor_set,
                                0, nullptr);
+
+    // float tmp = 666.0f;
+    // disp.cmdPushConstants(command_buffer, compute_pipeline_layout,
+    //                       VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float),
+    //                       &tmp);
 
     // equvalent to CUDA's number of blocks
     constexpr auto group_count_x =
@@ -533,7 +590,7 @@ public:
   // VmaAllocation allocation;
   std::array<VmaAllocation, 2> allocations;
   std::array<VkBuffer, 2> buffers;
-  std::array<VmaAllocationInfo, 2> alloc_info;
+  std::array<VmaAllocationInfo, 2> alloc_info; // to access the mapped memory
 
   // Device Related
   vkb::Device device;
@@ -551,6 +608,8 @@ public:
   VkDescriptorPool descriptor_pool;
   VkDescriptorSet descriptor_set;
 
+  VkSpecializationInfo tmp_spec_info;
+
   // Pipeline Related
   VkPipelineLayout compute_pipeline_layout;
   VkPipeline compute_pipeline;
@@ -561,41 +620,62 @@ public:
   // The different descriptor set layouts for this pipeline layout
 };
 
-std::ostream &operator<<(std::ostream &os, const glm::vec3 &vec) {
+std::ostream &operator<<(std::ostream &os, const glm::vec4 &vec) {
   os << "(" << vec.x << ", " << vec.y << ", " << vec.z << ")";
   return os;
 }
 
 int main() {
+
+  // Query the number of extensions
+  uint32_t extensionCount = 0;
+  vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+
+  // Get the extension properties
+  std::vector<VkExtensionProperties> extensions(extensionCount);
+  vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
+                                         extensions.data());
+
+  // Print the extensions
+  std::cout << "Available Vulkan Extensions:" << std::endl;
+  for (const auto &extension : extensions) {
+    std::cout << "\t" << extension.extensionName << std::endl;
+  }
+
   std::default_random_engine gen(114514);
   std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
 
-  std::vector<glm::vec3> h_data2(kN);
-  std::ranges::generate(
-      h_data2, [&]() { return glm::vec3(dis(gen), dis(gen), dis(gen)); });
+  std::vector<InputT> h_data1(InputSize());
+  std::ranges::generate(h_data1, [&]() { return dis(gen); });
+
+  // std::vector<glm::vec4> h_data2(InputSize());
+  // std::ranges::generate(
+  //     h_data2, [&]() { return glm::vec4(dis(gen), dis(gen), dis(gen), 0.0f);
+  //     });
 
   std::cout << "Input:\n";
   for (size_t i = 0; i < 10; ++i) {
-    std::cout << h_data2[i] << '\n';
+    std::cout << h_data1[i] << '\n';
   }
 
   ComputeEngine engine;
   engine.init();
 
-  engine.run(h_data2);
+  engine.run(h_data1);
 
   if (engine.alloc_info[1].pMappedData != nullptr) {
     // -------
     auto output_data =
-        reinterpret_cast<glm::uint *>(engine.alloc_info[1].pMappedData);
+        reinterpret_cast<OutputT *>(engine.alloc_info[1].pMappedData);
 
     std::cout << "Output:\n";
     for (size_t i = 0; i < 10; ++i) {
 
-      const auto code = Debug(h_data2[i]);
+      // const auto code = Debug(h_data2[i]);
 
-      std::cout << i << ":\t" << h_data2[i] << "\t" << output_data[i] << '\t'
-                << code << '\n';
+      std::cout << i << ":\t" << h_data1[i] << "\t" << output_data[i];
+      // std::cout << '\t' << code;
+      std::cout << '\n';
     }
   }
 
