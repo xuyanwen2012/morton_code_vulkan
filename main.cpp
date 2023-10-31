@@ -18,14 +18,20 @@
 
 constexpr auto kN = 1024;
 
-using InputT = float;
-using OutputT = float;
+using InputT = glm::vec4;
+using OutputT = glm::uint;
 
 [[nodiscard]] constexpr uint32_t InputSize() { return kN; }
 [[nodiscard]] constexpr uint32_t ComputeShaderProcessUnit() { return 256; }
 [[nodiscard]] constexpr uint32_t WorkGroupSize() {
   return InputSize() / ComputeShaderProcessUnit();
 }
+
+struct MyPushConsts {
+  uint32_t n;
+  float min_coord;
+  float range;
+};
 
 inline void VkCheck(const int result) {
   if (result != 0) {
@@ -51,9 +57,7 @@ public:
   }
 
   void run(const std::vector<InputT> &input_data) {
-
     VkCheck(write_data_to_buffer(input_data.data(), input_data.size()));
-
     VkCheck(execute_sync());
   }
 
@@ -230,12 +234,6 @@ protected:
     return 0;
   }
 
-  // new addition for CLSPV
-  // [[nodiscard]] VkSpecializationInfo make_specialization_info() const {
-
-  //   return spec_info;
-  // }
-
   /**
    * @brief Create a compute pipeline object
    *
@@ -243,13 +241,16 @@ protected:
    */
   [[nodiscard]] int create_compute_pipeline() {
     // Load & Create Shader Modules (1/3)
-    const auto compute_shader_code = readFile("shaders/simple.spv");
+    const auto compute_shader_code = readFile("shaders/morton.spv");
     const auto compute_module = create_shader_module(compute_shader_code);
 
     if (compute_module == VK_NULL_HANDLE) {
       std::cout << "failed to create shader module\n";
       return -1;
     }
+
+    // Set constant IDs
+    constexpr std::size_t num_of_entries = 3u;
 
     constexpr uint32_t workgroup_size_x = WorkGroupSize();
     constexpr uint32_t workgroup_size_y = 1;
@@ -283,6 +284,7 @@ protected:
         .pData = spec_map_content.data(),
     };
 
+    // Shader stage create info
     const VkPipelineShaderStageCreateInfo shader_stage_create_info{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -291,11 +293,10 @@ protected:
         .pSpecializationInfo = &spec_info,
     };
 
-    // Pushing a single float constant
-    constexpr VkPushConstantRange push_constant{
+    constexpr VkPushConstantRange push_constants{
         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
         .offset = 0,
-        .size = sizeof(float),
+        .size = sizeof(MyPushConsts),
     };
 
     // Create a Pipeline Layout (2/3)
@@ -303,10 +304,10 @@ protected:
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &descriptor_set_layout,
-        .pushConstantRangeCount = 0,
-        .pPushConstantRanges = nullptr,
-        // .pushConstantRangeCount = 1,
-        // .pPushConstantRanges = &push_constant,
+        // .pushConstantRangeCount = 0,
+        // .pPushConstantRanges = nullptr,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_constants,
     };
 
     if (disp.createPipelineLayout(&layout_create_info, nullptr,
@@ -316,6 +317,7 @@ protected:
     }
 
     // Pipeline itself (3/3)
+    // Pipeline create info
     const VkComputePipelineCreateInfo pipeline_create_info{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
         .stage = shader_stage_create_info,
@@ -532,9 +534,12 @@ protected:
                                0, nullptr);
 
     // float tmp = 666.0f;
-    // disp.cmdPushConstants(command_buffer, compute_pipeline_layout,
-    //                       VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float),
-    //                       &tmp);
+
+    constexpr MyPushConsts push_const{InputSize(), 0.0f, 1024.0f};
+
+    disp.cmdPushConstants(command_buffer, compute_pipeline_layout,
+                          VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MyPushConsts),
+                          &push_const);
 
     // equvalent to CUDA's number of blocks
     constexpr auto group_count_x =
@@ -614,8 +619,6 @@ public:
   VkDescriptorPool descriptor_pool;
   VkDescriptorSet descriptor_set;
 
-  // VkSpecializationInfo tmp_spec_info;
-
   // Pipeline Related
   VkPipelineLayout compute_pipeline_layout;
   VkPipeline compute_pipeline;
@@ -651,23 +654,21 @@ int main() {
   std::default_random_engine gen(114514);
   std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
 
-  std::vector<InputT> h_data1(InputSize());
-  std::ranges::generate(h_data1, [&]() { return dis(gen); });
-
-  // std::vector<glm::vec4> h_data2(InputSize());
-  // std::ranges::generate(
-  //     h_data2, [&]() { return glm::vec4(dis(gen), dis(gen), dis(gen), 0.0f);
-  //     });
+  std::vector<InputT> h_data2(InputSize());
+  std::ranges::generate(
+      h_data2, [&]() { return glm::vec4(dis(gen), dis(gen), dis(gen), 0.0f); });
 
   std::cout << "Input:\n";
   for (size_t i = 0; i < 10; ++i) {
-    std::cout << h_data1[i] << '\n';
+    std::cout << h_data2[i] << '\n';
   }
 
   ComputeEngine engine;
   engine.init();
 
-  engine.run(h_data1);
+  memset(engine.alloc_info[1].pMappedData, 0, InputSize() * sizeof(OutputT));
+
+  engine.run(h_data2);
 
   if (engine.alloc_info[1].pMappedData != nullptr) {
     // -------
@@ -677,10 +678,10 @@ int main() {
     std::cout << "Output:\n";
     for (size_t i = 0; i < InputSize(); ++i) {
 
-      // const auto code = Debug(h_data2[i]);
+      const auto code = PointToCode(h_data2[i]);
 
-      std::cout << i << ":\t" << h_data1[i] << "\t" << output_data[i];
-      // std::cout << '\t' << code;
+      std::cout << i << ":\t" << h_data2[i] << "\t" << output_data[i];
+      std::cout << '\t' << code;
       std::cout << '\n';
     }
   }

@@ -28,19 +28,14 @@ void main() {
     return;
 
   float x = input_xyz[index].x;
+  float y = input_xyz[index].y;
+  float z = input_xyz[index].z;
 
-  
-  // float y = input_xyz[index].y;
-  // float z = input_xyz[index].z;
+  // point to code
+  const uint bit_scale = 0xFFFFFFFFu >> (32 - (kCodeLen / 3));
+  uint i = uint(bit_scale * ((x - min_coord) / range));
+  uint j = uint(bit_scale * ((y - min_coord) / range));
+  uint k = uint(bit_scale * ((z - min_coord) / range));
 
-  // // point to code
-  // const uint bit_scale = 0xFFFFFFFFu >> (32 - (kCodeLen / 3));
-  // float debug = (x - min_coord) / range;
-  // uint i_debug = uint(debug);
-  // uint i = bit_scale * i_debug;
-  // uint j = uint(bit_scale * ((y - min_coord) / range));
-  // uint k = uint(bit_scale * ((z - min_coord) / range));
-
-  // output_code[index] = encode(uvec3(i, j, k));
-  output_code[index] = uint(x);
+  output_code[index] = encode(uvec3(i, j, k));
 }
