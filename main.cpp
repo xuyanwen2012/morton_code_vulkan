@@ -290,7 +290,7 @@ protected:
         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
         .module = compute_module,
         .pName = "foo",
-        .pSpecializationInfo = &spec_info,
+        // .pSpecializationInfo = &spec_info,
     };
 
     constexpr VkPushConstantRange push_constants{

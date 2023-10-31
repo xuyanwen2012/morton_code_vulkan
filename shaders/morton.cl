@@ -26,9 +26,9 @@ uint encode(uint i, uint j, uint k) {
   return expand_bit(i) | expand_bit(j) << 1 | expand_bit(k) << 2;
 }
 
-__kernel void foo(__global float4 *in_xyz, __global uint *out
-                  // const struct MyPushConstant push_constant
-                  ) {
+__kernel __attribute__((reqd_work_group_size(256, 1, 1))) void
+foo(__global float4 *in_xyz, __global uint *out,
+    const struct MyPushConstant push_constant) {
   const uint kCodeLen = 31;
 
   float x, y, z;
@@ -37,17 +37,17 @@ __kernel void foo(__global float4 *in_xyz, __global uint *out
   uint bit_scale;
   float bit_scale_f;
 
-  // uint n = push_constant.n;
-  // float min_coord = push_constant.min_coord;
-  // float range = push_constant.range;
+  uint n = push_constant.n;
+  float min_coord = push_constant.min_coord;
+  float range = push_constant.range;
 
   // uint n = ;
-  float min_coord = 0.0f;
-  float range = 1024.0f;
+  // float min_coord = 0.0f;
+  // float range = 1024.0f;
 
   uint index = get_global_id(0);
-  // if (index >= n)
-    // return;
+  if (index >= n)
+    return;
 
   // printf("index: %d\n", index);
 
