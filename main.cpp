@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <glm/fwd.hpp>
 #include <iostream>
@@ -45,6 +46,7 @@ public:
     VkCheck(create_storage_buffer());
     VkCheck(create_descriptor_set());
     VkCheck(create_compute_pipeline());
+
     VkCheck(create_command_pool());
   }
 
@@ -228,6 +230,12 @@ protected:
     return 0;
   }
 
+  // new addition for CLSPV
+  // [[nodiscard]] VkSpecializationInfo make_specialization_info() const {
+
+  //   return spec_info;
+  // }
+
   /**
    * @brief Create a compute pipeline object
    *
@@ -243,12 +251,44 @@ protected:
       return -1;
     }
 
+    constexpr uint32_t workgroup_size_x = WorkGroupSize();
+    constexpr uint32_t workgroup_size_y = 1;
+    constexpr uint32_t workgroup_size_z = 1;
+
+    const std::array<VkSpecializationMapEntry, 3> spec_map{
+        VkSpecializationMapEntry{
+            .constantID = 0,
+            .offset = 0,
+            .size = sizeof(uint32_t),
+        },
+        VkSpecializationMapEntry{
+            .constantID = 1,
+            .offset = 4,
+            .size = sizeof(uint32_t),
+        },
+        VkSpecializationMapEntry{
+            .constantID = 2,
+            .offset = 8,
+            .size = sizeof(uint32_t),
+        },
+    };
+
+    const std::array<uint32_t, 3> spec_map_content{
+        workgroup_size_x, workgroup_size_y, workgroup_size_z};
+
+    const VkSpecializationInfo spec_info{
+        .mapEntryCount = 3,
+        .pMapEntries = spec_map.data(),
+        .dataSize = sizeof(uint32_t) * 3,
+        .pData = spec_map_content.data(),
+    };
+
     const VkPipelineShaderStageCreateInfo shader_stage_create_info{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
         .module = compute_module,
         .pName = "foo",
-        // .pSpecializationInfo = &tmp_spec_info,
+        .pSpecializationInfo = &spec_info,
     };
 
     // Pushing a single float constant
@@ -381,40 +421,6 @@ protected:
     };
 
     disp.updateDescriptorSets(2, write.data(), 0, nullptr);
-
-    // new addition for CLSPV
-    const std::array<VkSpecializationMapEntry, 3> spec_map{
-        VkSpecializationMapEntry{
-            .constantID = 0,
-            .offset = 0,
-            .size = sizeof(uint32_t),
-        },
-        VkSpecializationMapEntry{
-            .constantID = 1,
-            .offset = sizeof(uint32_t),
-            .size = sizeof(uint32_t),
-        },
-        VkSpecializationMapEntry{
-            .constantID = 2,
-            .offset = sizeof(uint32_t) * 2,
-            .size = sizeof(uint32_t),
-        },
-    };
-
-    const std::array<uint32_t, 3> spec_map_content{
-        WorkGroupSize(),
-        1,
-        1,
-    };
-
-    const VkSpecializationInfo spec_info{
-        .mapEntryCount = 1,
-        .pMapEntries = spec_map.data(),
-        .dataSize = sizeof(uint32_t),
-        .pData = spec_map_content.data(),
-    };
-
-    tmp_spec_info = spec_info;
 
     return 0;
   }
@@ -608,7 +614,7 @@ public:
   VkDescriptorPool descriptor_pool;
   VkDescriptorSet descriptor_set;
 
-  VkSpecializationInfo tmp_spec_info;
+  // VkSpecializationInfo tmp_spec_info;
 
   // Pipeline Related
   VkPipelineLayout compute_pipeline_layout;
@@ -669,7 +675,7 @@ int main() {
         reinterpret_cast<OutputT *>(engine.alloc_info[1].pMappedData);
 
     std::cout << "Output:\n";
-    for (size_t i = 0; i < 10; ++i) {
+    for (size_t i = 0; i < InputSize(); ++i) {
 
       // const auto code = Debug(h_data2[i]);
 
