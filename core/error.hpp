@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdexcept>
-#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan.h>
 
 class VulkanException : public std::runtime_error {
 public:
