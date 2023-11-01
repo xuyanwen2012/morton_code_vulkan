@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <ranges>
 #include <vector>
@@ -127,18 +128,9 @@ public:
     vk_check(create_descriptor_set_layout());
     vk_check(create_descriptor_pool());
 
-    // usm_bufferse
-    usm_buffers[0] = new Buffer(InputSize() * sizeof(InputT));
-    usm_buffers[1] = new Buffer(InputSize() * sizeof(OutputT));
+    usm_buffers[0] = std::make_unique<Buffer>(InputSize() * sizeof(InputT));
+    usm_buffers[1] = std::make_unique<Buffer>(InputSize() * sizeof(OutputT));
 
-    // usm_buffers.emplace_back(std::move(a));
-    // usm_buffers.emplace_back(std::move(b));
-
-    // auto c = a;
-
-    // usm_buffers.emplace_back(1);
-
-    // vk_check(create_storage_buffer());
     vk_check(create_descriptor_set());
     vk_check(create_compute_pipeline());
 
@@ -146,12 +138,6 @@ public:
   }
 
   ~ComputeEngine() {
-    // for (int i = 0; i < 2; ++i) {
-    //   vmaDestroyBuffer(allocator, buffers[i], allocations[i]);
-    // }
-    // Buffer.
-    // usm_buffers.clear();
-
     disp.destroyDescriptorPool(descriptor_pool, nullptr);
     disp.destroyCommandPool(command_pool, nullptr);
     disp.destroyDescriptorSetLayout(descriptor_set_layout, nullptr);
@@ -597,7 +583,8 @@ public:
   // std::array<VkBuffer, 2> buffers;
   // std::array<VmaAllocationInfo, 2> alloc_info; // to access the mapped memory
 
-  std::array<Buffer *, 2> usm_buffers;
+  std::array<std::unique_ptr<Buffer>, 2> usm_buffers;
+  // std::array<Buffer *, 2> usm_buffers;
 
   // Command Related
   VkCommandPool command_pool;
