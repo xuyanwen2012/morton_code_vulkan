@@ -1,6 +1,9 @@
+// RUN: lspv --spv-version=1.5 --cl-std=CLC++ -inline-entry-points morton.cl -o
+// morton.spv
+// RUN: clspv-reflection --target-env spv1.5 morton.spv
 
+// Forward declaration
 uint expand_bit(uint a);
-// uint encode(uint3 ijk);
 uint encode(uint i, uint j, uint k);
 
 struct MyPushConstant {
@@ -18,18 +21,14 @@ uint expand_bit(uint a) {
   return x;
 }
 
-// uint encode(uint3 ijk) {
-// return expand_bit(ijk.x) | expand_bit(ijk.y) << 1 | expand_bit(ijk.z) << 2;
-// }
-
 uint encode(uint i, uint j, uint k) {
   return expand_bit(i) | expand_bit(j) << 1 | expand_bit(k) << 2;
 }
 
-__kernel __attribute__((reqd_work_group_size(256, 1, 1))) void
-foo(__global float4 *in_xyz, __global uint *out,
-    const struct MyPushConstant push_constant) {
+__kernel void foo(__global float4 *in_xyz, __global uint *out,
+                  const struct MyPushConstant push_constant) {
   const uint kCodeLen = 31;
+  // static_assert(1 + 1 == 2, "kCodeLen must be divisible by 3");
 
   float x, y, z;
   uint i, j, k;
@@ -37,13 +36,12 @@ foo(__global float4 *in_xyz, __global uint *out,
   uint bit_scale;
   float bit_scale_f;
 
+  // uint n = 1024;
+  // float min_coord = 0.0f;
+  // float range = 1024.0f;
   uint n = push_constant.n;
   float min_coord = push_constant.min_coord;
   float range = push_constant.range;
-
-  // uint n = ;
-  // float min_coord = 0.0f;
-  // float range = 1024.0f;
 
   uint index = get_global_id(0);
   if (index >= n)

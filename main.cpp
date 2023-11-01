@@ -23,9 +23,9 @@ using OutputT = glm::uint;
 
 [[nodiscard]] constexpr uint32_t InputSize() { return kN; }
 [[nodiscard]] constexpr uint32_t ComputeShaderProcessUnit() { return 256; }
-[[nodiscard]] constexpr uint32_t WorkGroupSize() {
-  return InputSize() / ComputeShaderProcessUnit();
-}
+// [[nodiscard]] constexpr uint32_t WorkGroupSize() {
+//   return InputSize() / ComputeShaderProcessUnit();
+// }
 
 struct MyPushConsts {
   uint32_t n;
@@ -38,7 +38,9 @@ inline void VkCheck(const int result) {
     exit(1);
   }
 }
-// ScratchBuffer
+
+//
+VmaAllocator allocator;
 
 class ComputeEngine {
 public:
@@ -88,8 +90,9 @@ protected:
     // Vulkan pick physical device (2/3)
     vkb::PhysicalDeviceSelector selector{instance};
     auto phys_ret =
-        selector.defer_surface_initialization()
-            .set_minimum_version(1, 2)
+        selector
+            .defer_surface_initialization()
+            // .set_minimum_version(1, 2)
             .prefer_gpu_device_type(vkb::PreferredDeviceType::integrated)
             .allow_any_gpu_device_type(false)
             .select();
@@ -160,15 +163,15 @@ protected:
    *
    */
   void vma_initialization() {
-    constexpr VmaVulkanFunctions vulkan_functions = {
-        .vkGetInstanceProcAddr = &vkGetInstanceProcAddr,
-        .vkGetDeviceProcAddr = &vkGetDeviceProcAddr,
-    };
+    // constexpr VmaVulkanFunctions vulkan_functions = {
+    //     .vkGetInstanceProcAddr = &vkGetInstanceProcAddr,
+    //     .vkGetDeviceProcAddr = &vkGetDeviceProcAddr,
+    // };
 
     const VmaAllocatorCreateInfo allocator_create_info = {
         .physicalDevice = device.physical_device,
         .device = device.device,
-        .pVulkanFunctions = &vulkan_functions,
+        // .pVulkanFunctions = &vulkan_functions,
         .instance = instance.instance,
     };
 
@@ -251,12 +254,7 @@ protected:
 
     // Set constant IDs
     constexpr std::size_t num_of_entries = 3u;
-
-    constexpr uint32_t workgroup_size_x = WorkGroupSize();
-    constexpr uint32_t workgroup_size_y = 1;
-    constexpr uint32_t workgroup_size_z = 1;
-
-    const std::array<VkSpecializationMapEntry, 3> spec_map{
+    const std::array<VkSpecializationMapEntry, num_of_entries> spec_map{
         VkSpecializationMapEntry{
             .constantID = 0,
             .offset = 0,
@@ -274,13 +272,13 @@ protected:
         },
     };
 
-    const std::array<uint32_t, 3> spec_map_content{
-        workgroup_size_x, workgroup_size_y, workgroup_size_z};
+    constexpr std::array<uint32_t, num_of_entries> spec_map_content{
+        ComputeShaderProcessUnit(), 1, 1};
 
     const VkSpecializationInfo spec_info{
-        .mapEntryCount = 3,
+        .mapEntryCount = num_of_entries,
         .pMapEntries = spec_map.data(),
-        .dataSize = sizeof(uint32_t) * 3,
+        .dataSize = sizeof(uint32_t) * num_of_entries,
         .pData = spec_map_content.data(),
     };
 
@@ -290,24 +288,29 @@ protected:
         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
         .module = compute_module,
         .pName = "foo",
-        // .pSpecializationInfo = &spec_info,
+        .pSpecializationInfo = &spec_info,
     };
 
-    constexpr VkPushConstantRange push_constants{
+    // pushconstant,name,region_offset,offset,0,size,12
+    std::vector<VkPushConstantRange> push_const{{
         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
         .offset = 0,
+        .size = 12,
+    }};
+
+    push_const.emplace_back(VkPushConstantRange{
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = 16,
         .size = sizeof(MyPushConsts),
-    };
+    });
 
     // Create a Pipeline Layout (2/3)
     const VkPipelineLayoutCreateInfo layout_create_info{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &descriptor_set_layout,
-        // .pushConstantRangeCount = 0,
-        // .pPushConstantRanges = nullptr,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_constants,
+        .pushConstantRangeCount = static_cast<uint32_t>(push_const.size()),
+        .pPushConstantRanges = push_const.data(),
     };
 
     if (disp.createPipelineLayout(&layout_create_info, nullptr,
@@ -535,10 +538,13 @@ protected:
 
     // float tmp = 666.0f;
 
-    constexpr MyPushConsts push_const{InputSize(), 0.0f, 1024.0f};
-
+    constexpr uint32_t default_push[3]{0, 0, 0};
     disp.cmdPushConstants(command_buffer, compute_pipeline_layout,
-                          VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MyPushConsts),
+                          VK_SHADER_STAGE_COMPUTE_BIT, 0, 12, &default_push[0]);
+
+    constexpr MyPushConsts push_const{InputSize(), 0.0f, 1024.0f};
+    disp.cmdPushConstants(command_buffer, compute_pipeline_layout,
+                          VK_SHADER_STAGE_COMPUTE_BIT, 16, sizeof(MyPushConsts),
                           &push_const);
 
     // equvalent to CUDA's number of blocks
@@ -598,14 +604,12 @@ public:
   vkb::Instance instance;
 
   // Buffer related
-  // VmaAllocation allocation;
   std::array<VmaAllocation, 2> allocations;
   std::array<VkBuffer, 2> buffers;
   std::array<VmaAllocationInfo, 2> alloc_info; // to access the mapped memory
 
   // Device Related
   vkb::Device device;
-  VmaAllocator allocator;
   vkb::DispatchTable disp;
   VkQueue compute_queue; // queues (vector of queues)
   // Potentially fence poll here
@@ -622,11 +626,6 @@ public:
   // Pipeline Related
   VkPipelineLayout compute_pipeline_layout;
   VkPipeline compute_pipeline;
-  // std::vector<VkShaderModule*> shader_modules;
-
-  // The shader resources that this pipeline layout uses, indexed by their name
-  // A map of each set and the resources it owns used by the pipeline layout
-  // The different descriptor set layouts for this pipeline layout
 };
 
 std::ostream &operator<<(std::ostream &os, const glm::vec4 &vec) {
