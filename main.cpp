@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 
 #include "core/base_engine.hpp"
+#include "core/error.hpp"
 
 constexpr auto kN = 1024;
 
@@ -29,7 +30,81 @@ struct MyPushConsts {
 };
 
 namespace core {
+
 VmaAllocator allocator;
+
+// Unifed Shared Memory
+class Buffer {
+public:
+  Buffer(const VkDeviceSize size) : size(size) {
+    // The default setting, Unified Shared Memory
+    constexpr VmaAllocationCreateInfo alloc_create_info{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                 VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
+                 VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+    };
+
+    const VkBufferCreateInfo buffer_create_info{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+
+    const auto result =
+        vmaCreateBuffer(allocator, &buffer_create_info, &alloc_create_info,
+                        &buf, &alloc, &alloc_info);
+
+    if (result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot create Buffer"};
+    }
+
+    memory = alloc_info.deviceMemory;
+    mapped_data = static_cast<uint8_t *>(alloc_info.pMappedData);
+  }
+
+  Buffer(const Buffer &) = delete;
+
+  ~Buffer() {
+    if (alloc != VK_NULL_HANDLE) {
+      vmaDestroyBuffer(allocator, buf, alloc);
+    }
+  }
+
+  Buffer &operator=(const Buffer &) = delete;
+  Buffer &operator=(Buffer &&) = delete;
+
+  const VkBuffer *get() const { return &buf; };
+  VmaAllocation get_allocation() const { return alloc; };
+  VkDeviceMemory get_memory() const { return memory; }
+  VkDeviceSize get_size() const { return size; };
+  const uint8_t *get_data() const { return mapped_data; }
+
+  void update(const std::vector<uint8_t> &data, size_t offset) {
+    update(data.data(), data.size(), offset);
+  }
+  void update(const void *data, const size_t size, const size_t offset) {
+    update(reinterpret_cast<const uint8_t *>(data), size, offset);
+  }
+  void update(const uint8_t *data, const size_t size, const size_t offset) {}
+
+private:
+  VmaAllocation alloc;
+  VmaAllocationInfo alloc_info;
+  uint8_t *mapped_data{nullptr};
+
+  VkBuffer buf;
+  VkDeviceMemory memory{VK_NULL_HANDLE};
+  VkDeviceSize size{0};
+
+  // Misc
+  // bool mapped{true};
+  // bool persistent{true};
+};
 
 class ComputeEngine : public core::BaseEngine {
 public:
