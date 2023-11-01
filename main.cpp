@@ -438,8 +438,6 @@ protected:
                                compute_pipeline_layout, 0, 1, &descriptor_set,
                                0, nullptr);
 
-    // float tmp = 666.0f;
-
     constexpr uint32_t default_push[3]{0, 0, 0};
     disp.cmdPushConstants(command_buffer, compute_pipeline_layout,
                           VK_SHADER_STAGE_COMPUTE_BIT, 0, 12, &default_push[0]);
