@@ -1,6 +1,5 @@
 #pragma once
 
-#include <stdexcept>
 #include "../vma_usage.h"
 
 //  Creates a scratch buffer using VMA with pre-defined usage flags
@@ -23,7 +22,8 @@ public:
 
     // const auto result =
     //     vmaCreateBuffer(device.get_memory_allocator(), &buffer_info,
-    //                     &memory_info, &buffer, &allocation, &allocation_info);
+    //                     &memory_info, &buffer, &allocation,
+    //                     &allocation_info);
 
     // if (result != VK_SUCCESS) {
     //   throw std::runtime_error("Failed to create scratch buffer");
@@ -46,7 +46,7 @@ public:
   //   }
 
 private:
-//   uint64_t device_address{0};
+  //   uint64_t device_address{0};
 
   VkBuffer buffer;
   VmaAllocation allocation;

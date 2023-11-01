@@ -23,9 +23,6 @@ using OutputT = glm::uint;
 
 [[nodiscard]] constexpr uint32_t InputSize() { return kN; }
 [[nodiscard]] constexpr uint32_t ComputeShaderProcessUnit() { return 256; }
-// [[nodiscard]] constexpr uint32_t WorkGroupSize() {
-//   return InputSize() / ComputeShaderProcessUnit();
-// }
 
 struct MyPushConsts {
   uint32_t n;
@@ -33,44 +30,33 @@ struct MyPushConsts {
   float range;
 };
 
-inline void VkCheck(const int result) {
+inline void vk_check(const int result) {
   if (result != 0) {
     exit(1);
   }
 }
 
-//
+// Need a global allocator for VMA
 VmaAllocator allocator;
 
-class ComputeEngine {
+// Base Engine does The Setup. Single device, single queue
+class BaseEngine {
 public:
-  void init() {
-    VkCheck(device_initialization());
-    VkCheck(get_queues());
+  BaseEngine() {
+    vk_check(device_initialization());
+    vk_check(get_queues());
     vma_initialization();
-
-    VkCheck(create_descriptor_set_layout());
-    VkCheck(create_descriptor_pool());
-    VkCheck(create_storage_buffer());
-    VkCheck(create_descriptor_set());
-    VkCheck(create_compute_pipeline());
-
-    VkCheck(create_command_pool());
   }
 
-  void run(const std::vector<InputT> &input_data) {
-    VkCheck(write_data_to_buffer(input_data.data(), input_data.size()));
-    VkCheck(execute_sync());
+  ~BaseEngine() {
+    if (allocator != VK_NULL_HANDLE) {
+      vmaDestroyAllocator(allocator);
+    }
+    destroy_device(device);
+    destroy_instance(instance);
   }
 
-  void teardown() { cleanup(); }
-
-protected:
-  /**
-   * @brief Initialize vulkan device using vk-bootstrap
-   *
-   * @return int
-   */
+private:
   [[nodiscard]] int device_initialization() {
     // Vulkan instance creation (1/3)
     vkb::InstanceBuilder instance_builder;
@@ -119,6 +105,74 @@ protected:
     return 0;
   }
 
+  [[nodiscard]] int get_queues() {
+    auto q_ret = device.get_queue(vkb::QueueType::compute);
+    if (!q_ret.has_value()) {
+      std::cout << "failed to get compute queue: " << q_ret.error().message()
+                << "\n";
+      return -1;
+    }
+    compute_queue = q_ret.value();
+    return 0;
+  }
+
+  void vma_initialization() {
+    if (allocator != VK_NULL_HANDLE) {
+      return;
+    }
+
+    constexpr VmaVulkanFunctions vulkan_functions{
+        .vkGetInstanceProcAddr = &vkGetInstanceProcAddr,
+        .vkGetDeviceProcAddr = &vkGetDeviceProcAddr,
+    };
+
+    const VmaAllocatorCreateInfo allocator_create_info{
+        .physicalDevice = device.physical_device,
+        .device = device.device,
+        .pVulkanFunctions = &vulkan_functions,
+        .instance = instance.instance,
+    };
+
+    vmaCreateAllocator(&allocator_create_info, &allocator);
+  }
+
+protected:
+  vkb::Instance instance;
+  vkb::Device device;
+  vkb::DispatchTable disp;
+  VkQueue compute_queue; // queues (vector of queues)
+};
+
+class ComputeEngine : public BaseEngine {
+public:
+  ComputeEngine() : BaseEngine() {
+    vk_check(create_descriptor_set_layout());
+    vk_check(create_descriptor_pool());
+    vk_check(create_storage_buffer());
+    vk_check(create_descriptor_set());
+    vk_check(create_compute_pipeline());
+
+    vk_check(create_command_pool());
+  }
+
+  ~ComputeEngine() {
+    for (int i = 0; i < 2; ++i) {
+      vmaDestroyBuffer(allocator, buffers[i], allocations[i]);
+    }
+
+    disp.destroyDescriptorPool(descriptor_pool, nullptr);
+    disp.destroyCommandPool(command_pool, nullptr);
+    disp.destroyDescriptorSetLayout(descriptor_set_layout, nullptr);
+    disp.destroyPipeline(compute_pipeline, nullptr);
+    disp.destroyPipelineLayout(compute_pipeline_layout, nullptr);
+  }
+
+  void run(const std::vector<InputT> &input_data) {
+    vk_check(write_data_to_buffer(input_data.data(), input_data.size()));
+    vk_check(execute_sync());
+  }
+
+protected:
   /**
    * @brief Create a Shader Module object from SPIR-V code
    *
@@ -140,42 +194,6 @@ protected:
     }
 
     return shader_module;
-  }
-
-  /**
-   * @brief Get the queues object from device
-   *
-   * @return int 0 if success, -1 if failed
-   */
-  [[nodiscard]] int get_queues() {
-    auto cq = device.get_queue(vkb::QueueType::compute);
-    if (!cq.has_value()) {
-      std::cout << "failed to get graphics queue: " << cq.error().message()
-                << "\n";
-      return -1;
-    }
-    compute_queue = cq.value();
-    return 0;
-  }
-
-  /**
-   * @brief Initialize Vulkan Memory Allocator
-   *
-   */
-  void vma_initialization() {
-    // constexpr VmaVulkanFunctions vulkan_functions = {
-    //     .vkGetInstanceProcAddr = &vkGetInstanceProcAddr,
-    //     .vkGetDeviceProcAddr = &vkGetDeviceProcAddr,
-    // };
-
-    const VmaAllocatorCreateInfo allocator_create_info = {
-        .physicalDevice = device.physical_device,
-        .device = device.device,
-        // .pVulkanFunctions = &vulkan_functions,
-        .instance = instance.instance,
-    };
-
-    vmaCreateAllocator(&allocator_create_info, &allocator);
   }
 
   /**
@@ -292,25 +310,20 @@ protected:
     };
 
     // pushconstant,name,region_offset,offset,0,size,12
-    std::vector<VkPushConstantRange> push_const{{
+    constexpr VkPushConstantRange push_const{
         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
         .offset = 0,
-        .size = 12,
-    }};
-
-    push_const.emplace_back(VkPushConstantRange{
-        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-        .offset = 16,
-        .size = sizeof(MyPushConsts),
-    });
+        .size = 16 + sizeof(MyPushConsts), // 16 is for the first 3 uint32_t, 12
+                                           // is for the second struct
+    };
 
     // Create a Pipeline Layout (2/3)
     const VkPipelineLayoutCreateInfo layout_create_info{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &descriptor_set_layout,
-        .pushConstantRangeCount = static_cast<uint32_t>(push_const.size()),
-        .pPushConstantRanges = push_const.data(),
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_const,
     };
 
     if (disp.createPipelineLayout(&layout_create_info, nullptr,
@@ -472,11 +485,12 @@ protected:
       vmaCreateBuffer(allocator, &buffer_create_info[i], &alloc_create_info,
                       &buffers[i], &allocations[i], &alloc_info[i]);
       std::cout << "alloc_info: " << i << std::endl;
-      std::cout << "size: " << alloc_info[i].size << std::endl;
-      std::cout << "offset: " << alloc_info[i].offset << std::endl;
-      std::cout << "memoryType: " << alloc_info[i].memoryType << std::endl;
-      std::cout << "mappedData: " << alloc_info[i].pMappedData << std::endl;
-      std::cout << "deviceMemory: " << alloc_info[i].deviceMemory << std::endl;
+      std::cout << "\tsize: " << alloc_info[i].size << std::endl;
+      std::cout << "\toffset: " << alloc_info[i].offset << std::endl;
+      std::cout << "\tmemoryType: " << alloc_info[i].memoryType << std::endl;
+      std::cout << "\tmappedData: " << alloc_info[i].pMappedData << std::endl;
+      std::cout << "\tdeviceMemory: " << alloc_info[i].deviceMemory
+                << std::endl;
     }
 
     // Print all alloc_info info
@@ -490,9 +504,9 @@ protected:
     vmaGetAllocationMemoryProperties(allocator, allocations[0], &memPropFlags);
 
     if (memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
-      std::cout << "host visible" << std::endl;
+      // std::cout << "host visible" << std::endl;
     } else {
-      std::cout << "not host visible" << std::endl;
+      // std::cout << "not host visible" << std::endl;
       return -1;
     }
     return 0;
@@ -577,42 +591,11 @@ protected:
     return 0;
   }
 
-  /**
-   * @brief Destroy vulkan instance
-   *
-   */
-  void cleanup() {
-    for (int i = 0; i < 2; ++i) {
-      vmaDestroyBuffer(allocator, buffers[i], allocations[i]);
-    }
-    // vmaDestroyBuffer(allocator, buffer, allocation);
-
-    if (allocator != VK_NULL_HANDLE) {
-      vmaDestroyAllocator(allocator);
-    }
-
-    disp.destroyDescriptorPool(descriptor_pool, nullptr);
-    disp.destroyCommandPool(command_pool, nullptr);
-    disp.destroyDescriptorSetLayout(descriptor_set_layout, nullptr);
-    disp.destroyPipeline(compute_pipeline, nullptr);
-    disp.destroyPipelineLayout(compute_pipeline_layout, nullptr);
-    destroy_device(device);
-    destroy_instance(instance);
-  }
-
 public:
-  vkb::Instance instance;
-
   // Buffer related
   std::array<VmaAllocation, 2> allocations;
   std::array<VkBuffer, 2> buffers;
   std::array<VmaAllocationInfo, 2> alloc_info; // to access the mapped memory
-
-  // Device Related
-  vkb::Device device;
-  vkb::DispatchTable disp;
-  VkQueue compute_queue; // queues (vector of queues)
-  // Potentially fence poll here
 
   // Command Related
   VkCommandPool command_pool;
@@ -633,23 +616,22 @@ std::ostream &operator<<(std::ostream &os, const glm::vec4 &vec) {
   return os;
 }
 
-int main() {
-
-  // Query the number of extensions
+void ShowAvailableExtensions() {
   uint32_t extensionCount = 0;
   vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
 
-  // Get the extension properties
   std::vector<VkExtensionProperties> extensions(extensionCount);
   vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
                                          extensions.data());
 
-  // Print the extensions
   std::cout << "Available Vulkan Extensions:" << std::endl;
   for (const auto &extension : extensions) {
     std::cout << "\t" << extension.extensionName << std::endl;
   }
+}
 
+int main() {
+  // Prepare data
   std::default_random_engine gen(114514);
   std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
 
@@ -657,16 +639,12 @@ int main() {
   std::ranges::generate(
       h_data2, [&]() { return glm::vec4(dis(gen), dis(gen), dis(gen), 0.0f); });
 
-  std::cout << "Input:\n";
-  for (size_t i = 0; i < 10; ++i) {
-    std::cout << h_data2[i] << '\n';
-  }
+  // Init
+  ComputeEngine engine{};
 
-  ComputeEngine engine;
-  engine.init();
+  // memset(engine.alloc_info[1].pMappedData, 0, InputSize() * sizeof(OutputT));
 
-  memset(engine.alloc_info[1].pMappedData, 0, InputSize() * sizeof(OutputT));
-
+  // Execute
   engine.run(h_data2);
 
   if (engine.alloc_info[1].pMappedData != nullptr) {
@@ -675,7 +653,7 @@ int main() {
         reinterpret_cast<OutputT *>(engine.alloc_info[1].pMappedData);
 
     std::cout << "Output:\n";
-    for (size_t i = 0; i < InputSize(); ++i) {
+    for (size_t i = 0; i < 10; ++i) {
 
       const auto code = PointToCode(h_data2[i]);
 
@@ -684,8 +662,6 @@ int main() {
       std::cout << '\n';
     }
   }
-
-  engine.teardown();
 
   std::cout << "Done\n";
   return EXIT_SUCCESS;
