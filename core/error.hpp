@@ -1,7 +1,9 @@
 #pragma once
 
 #include <stdexcept>
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
+
+namespace core {
 
 class VulkanException : public std::runtime_error {
 public:
@@ -21,3 +23,5 @@ public:
 private:
   std::string error_message;
 };
+
+} // namespace core

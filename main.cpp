@@ -14,7 +14,7 @@
 #include <glm/glm.hpp>
 
 #include "core/base_engine.hpp"
-// #include "core/error.hpp"
+#include "core/error.hpp"
 
 constexpr auto kN = 1024;
 
@@ -37,7 +37,33 @@ VmaAllocator allocator;
 // Unifed Shared Memory
 class Buffer {
 public:
-  Buffer(const VkDeviceSize size) : size(size) {
+  Buffer() = default;
+
+  // Buffer(const VkDeviceSize size) : size(size) {}
+
+  Buffer(const Buffer &) = delete;
+
+  // Buffer(Buffer &&other)
+  //     : alloc(other.alloc), memory{other.memory}, size{other.size},
+  //       mapped_data{other.mapped_data} {
+
+  //   // Reset other handles to avoid releasing on destruction
+  //   other.alloc = VK_NULL_HANDLE;
+  //   other.memory = VK_NULL_HANDLE;
+  //   other.mapped_data = nullptr;
+  //   // other.mapped = false;
+  // }
+
+  ~Buffer() {
+    if (alloc != VK_NULL_HANDLE) {
+      std::cout << "Destroying Buffer\n";
+      vmaDestroyBuffer(allocator, buf, alloc);
+    }
+  }
+
+  void init(const VkDeviceSize new_size) {
+    size = new_size;
+
     // The default setting, Unified Shared Memory
     constexpr VmaAllocationCreateInfo alloc_create_info{
         .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
@@ -48,7 +74,7 @@ public:
 
     const VkBufferCreateInfo buffer_create_info{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = size,
+        .size = new_size,
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -61,32 +87,22 @@ public:
                         &buf, &alloc, &alloc_info);
 
     if (result != VK_SUCCESS) {
-      // throw VulkanException{result, "Cannot create Buffer"};
-      std::cout << "Cannot create Buffer\n";
-      exit(1);
+      throw VulkanException{result, "Cannot create Buffer"};
+      // std::cout << "Cannot create Buffer\n";
+      // exit(1);
+    }
+
+    if constexpr (true) {
+      std::cout << "alloc_info: " << std::endl;
+      std::cout << "\tsize: " << alloc_info.size << std::endl;
+      std::cout << "\toffset: " << alloc_info.offset << std::endl;
+      std::cout << "\tmemoryType: " << alloc_info.memoryType << std::endl;
+      std::cout << "\tmappedData: " << alloc_info.pMappedData << std::endl;
+      std::cout << "\tdeviceMemory: " << alloc_info.deviceMemory << std::endl;
     }
 
     memory = alloc_info.deviceMemory;
-    mapped_data = static_cast<uint8_t *>(alloc_info.pMappedData);
-  }
-
-  Buffer(const Buffer &) = delete;
-
-  Buffer(Buffer &&other)
-      : alloc(other.alloc), memory{other.memory}, size{other.size},
-        mapped_data{other.mapped_data} {
-
-    // Reset other handles to avoid releasing on destruction
-    other.alloc = VK_NULL_HANDLE;
-    other.memory = VK_NULL_HANDLE;
-    other.mapped_data = nullptr;
-    // other.mapped = false;
-  }
-
-  ~Buffer() {
-    if (alloc != VK_NULL_HANDLE) {
-      vmaDestroyBuffer(allocator, buf, alloc);
-    }
+    mapped_data = static_cast<std::byte *>(alloc_info.pMappedData);
   }
 
   Buffer &operator=(const Buffer &) = delete;
@@ -98,28 +114,26 @@ public:
   VmaAllocation get_allocation() const { return alloc; };
   VkDeviceMemory get_memory() const { return memory; }
   VkDeviceSize get_size() const { return size; };
-  const uint8_t *get_data() const { return mapped_data; }
+  const std::byte *get_data() const { return mapped_data; }
 
-  void update(const std::vector<uint8_t> &data, size_t offset) {
+  void update(const std::vector<std::byte> &data, size_t offset) {
     update(data.data(), data.size(), offset);
   }
   void update(const void *data, const size_t size, const size_t offset) {
-    update(reinterpret_cast<const uint8_t *>(data), size, offset);
+    update(reinterpret_cast<const std::byte *>(data), size, offset);
   }
-  void update(const uint8_t *data, const size_t size, const size_t offset) {}
+  void update(const std::byte *data, const size_t size, const size_t offset) {
+    std::memcpy(mapped_data + offset, data, size);
+  }
 
-private:
+public:
   VmaAllocation alloc;
-  VmaAllocationInfo alloc_info;
-  uint8_t *mapped_data{nullptr};
-
   VkBuffer buf;
+
+  VmaAllocationInfo alloc_info;
+  std::byte *mapped_data{nullptr};
   VkDeviceMemory memory{VK_NULL_HANDLE};
   VkDeviceSize size{0};
-
-  // Misc
-  // bool mapped{true};
-  // bool persistent{true};
 };
 
 class ComputeEngine : public core::BaseEngine {
@@ -128,8 +142,11 @@ public:
     vk_check(create_descriptor_set_layout());
     vk_check(create_descriptor_pool());
 
-    usm_buffers[0] = std::make_unique<Buffer>(InputSize() * sizeof(InputT));
-    usm_buffers[1] = std::make_unique<Buffer>(InputSize() * sizeof(OutputT));
+    // usm_buffers[0] = std::make_unique<Buffer>(InputSize() * sizeof(InputT));
+    // usm_buffers[1] = std::make_unique<Buffer>(InputSize() * sizeof(OutputT));
+    // vk_check(create_storage_buffer());
+    usm_buffers[0].init(InputSize() * sizeof(InputT));
+    usm_buffers[1].init(InputSize() * sizeof(OutputT));
 
     vk_check(create_descriptor_set());
     vk_check(create_compute_pipeline());
@@ -385,13 +402,15 @@ protected:
 
     // Maybe combine into struct buffer
     const VkDescriptorBufferInfo in_buffer_info{
-        .buffer = *usm_buffers[0]->get(),
+        .buffer = usm_buffers[0].buf,
+        // .buffer = buffers[0],
         .offset = 0,
         .range = InputSize() * sizeof(InputT),
     };
 
     const VkDescriptorBufferInfo out_buffer_info{
-        .buffer = *usm_buffers[1]->get(), // why not [1]?
+        .buffer = usm_buffers[1].buf, // why not [1]?
+        // .buffer = buffers[1],
         .offset = 0,
         .range = InputSize() * sizeof(OutputT),
     };
@@ -428,9 +447,10 @@ protected:
   //  * @return int
   //  */
   // [[nodiscard]] int create_storage_buffer() {
-  //   // Checkout
-  //   //
-  //   https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
+  // // Checkout
+  // //
+  // https: //
+  // gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
   //   //  It will then prefer a memory type that is both DEVICE_LOCAL and
   //   //  HOST_VISIBLE (integrated memory or BAR)
   //   constexpr VmaAllocationCreateInfo alloc_create_info{
@@ -505,9 +525,7 @@ protected:
   int write_data_to_buffer(const InputT *h_data, const size_t n) {
     // memcpy(alloc_info[0].pMappedData, h_data, sizeof(InputT) * n);
 
-    usm_buffers[0]->update(h_data, sizeof(InputT) * n, 0);
-    // std::copy(h_data, h_data + n,
-    // reinterpret_cast<InputT *>());
+    usm_buffers[0].update(h_data, sizeof(InputT) * n, 0);
 
     return 0;
   }
@@ -578,13 +596,14 @@ protected:
   }
 
 public:
-  // // Buffer related
+  // Buffer related
   // std::array<VmaAllocation, 2> allocations;
   // std::array<VkBuffer, 2> buffers;
   // std::array<VmaAllocationInfo, 2> alloc_info; // to access the mapped memory
 
-  std::array<std::unique_ptr<Buffer>, 2> usm_buffers;
+  // std::array<std::unique_ptr<Buffer>, 2> usm_buffers;
   // std::array<Buffer *, 2> usm_buffers;
+  std::array<Buffer, 2> usm_buffers;
 
   // Command Related
   VkCommandPool command_pool;
@@ -638,10 +657,10 @@ int main() {
 
   // -------
   // auto output_data =
-  //     reinterpret_cast<OutputT *>(engine.alloc_info[1].pMappedData);
+  // reinterpret_cast<OutputT *>(engine.alloc_info[1].pMappedData);
 
   auto output_data =
-      reinterpret_cast<const OutputT *>(engine.usm_buffers[1]->get_data());
+      reinterpret_cast<const OutputT *>(engine.usm_buffers[1].get_data());
 
   std::cout << "Output:\n";
   for (size_t i = 0; i < 10; ++i) {
