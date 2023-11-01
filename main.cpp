@@ -3,9 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
-#include <memory>
 #include <random>
-#include <ranges>
 #include <vector>
 
 #include "file_reader.hpp"
@@ -38,12 +36,13 @@ VmaAllocator allocator;
 class Buffer {
 public:
   Buffer() = default;
+  // MYBuffer() = delete;
 
-  // Buffer(const VkDeviceSize size) : size(size) {}
+  Buffer(const VkDeviceSize size) : size(size) { init(size); }
 
-  Buffer(const Buffer &) = delete;
+  // MYBuffer(const MYBuffer &) = delete;
 
-  // Buffer(Buffer &&other)
+  // MYBuffer(MYBuffer &&other)
   //     : alloc(other.alloc), memory{other.memory}, size{other.size},
   //       mapped_data{other.mapped_data} {
 
@@ -51,7 +50,6 @@ public:
   //   other.alloc = VK_NULL_HANDLE;
   //   other.memory = VK_NULL_HANDLE;
   //   other.mapped_data = nullptr;
-  //   // other.mapped = false;
   // }
 
   ~Buffer() {
@@ -88,8 +86,6 @@ public:
 
     if (result != VK_SUCCESS) {
       throw VulkanException{result, "Cannot create Buffer"};
-      // std::cout << "Cannot create Buffer\n";
-      // exit(1);
     }
 
     if constexpr (true) {
@@ -105,9 +101,6 @@ public:
     mapped_data = static_cast<std::byte *>(alloc_info.pMappedData);
   }
 
-  Buffer &operator=(const Buffer &) = delete;
-  Buffer &operator=(Buffer &&) = delete;
-
   const VkBuffer *get() const { return &buf; };
   VkBuffer *get_mut() { return &buf; };
 
@@ -119,9 +112,11 @@ public:
   void update(const std::vector<std::byte> &data, size_t offset) {
     update(data.data(), data.size(), offset);
   }
+
   void update(const void *data, const size_t size, const size_t offset) {
     update(reinterpret_cast<const std::byte *>(data), size, offset);
   }
+
   void update(const std::byte *data, const size_t size, const size_t offset) {
     std::memcpy(mapped_data + offset, data, size);
   }
@@ -139,19 +134,24 @@ public:
 class ComputeEngine : public core::BaseEngine {
 public:
   ComputeEngine() : BaseEngine() {
-    vk_check(create_descriptor_set_layout());
-    vk_check(create_descriptor_pool());
+    create_descriptor_set_layout();
+    create_descriptor_pool();
 
     // usm_buffers[0] = std::make_unique<Buffer>(InputSize() * sizeof(InputT));
     // usm_buffers[1] = std::make_unique<Buffer>(InputSize() * sizeof(OutputT));
     // vk_check(create_storage_buffer());
+
+    // usm_buffers.push_back(std::move(MYBuffer(InputSize() * sizeof(InputT))));
+    // usm_buffers.push_back(std::move(MYBuffer(InputSize() *
+    // sizeof(OutputT))));
+
     usm_buffers[0].init(InputSize() * sizeof(InputT));
     usm_buffers[1].init(InputSize() * sizeof(OutputT));
 
-    vk_check(create_descriptor_set());
-    vk_check(create_compute_pipeline());
+    create_descriptor_set();
+    create_compute_pipeline();
 
-    vk_check(create_command_pool());
+    create_command_pool();
   }
 
   ~ComputeEngine() {
@@ -163,17 +163,11 @@ public:
   }
 
   void run(const std::vector<InputT> &input_data) {
-    vk_check(write_data_to_buffer(input_data.data(), input_data.size()));
-    vk_check(execute_sync());
+    write_data_to_buffer(input_data.data(), input_data.size());
+    execute_sync();
   }
 
 protected:
-  /**
-   * @brief Create a Shader Module object from SPIR-V code
-   *
-   * @param code SPIR-V code
-   * @return VkShaderModule shader module handle
-   */
   [[nodiscard]] VkShaderModule
   create_shader_module(const std::vector<char> &code) {
     const VkShaderModuleCreateInfo create_info{
@@ -183,20 +177,17 @@ protected:
     };
 
     VkShaderModule shader_module;
-    if (disp.createShaderModule(&create_info, nullptr, &shader_module) !=
-        VK_SUCCESS) {
-      return VK_NULL_HANDLE;
+
+    if (const auto result =
+            disp.createShaderModule(&create_info, nullptr, &shader_module);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot create shader module"};
     }
 
     return shader_module;
   }
 
-  /**
-   * @brief Create a descriptor set layout object
-   *
-   * @return int
-   */
-  [[nodiscard]] int create_descriptor_set_layout() {
+  void create_descriptor_set_layout() {
     // First thing to do
     const std::array<VkDescriptorSetLayoutBinding, 2> binding{
         // input
@@ -221,49 +212,31 @@ protected:
         .pBindings = binding.data(),
     };
 
-    if (disp.createDescriptorSetLayout(&layout_info, nullptr,
-                                       &descriptor_set_layout) != VK_SUCCESS) {
-      std::cout << "failed to create descriptor set layout\n";
-      return -1;
+    if (const auto result = disp.createDescriptorSetLayout(
+            &layout_info, nullptr, &descriptor_set_layout);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot create descriptor set layout"};
     }
-
-    return 0;
   }
 
-  /**
-   * @brief Create a command pool object
-   *
-   * @return int
-   */
-  [[nodiscard]] int create_command_pool() {
+  void create_command_pool() {
     const VkCommandPoolCreateInfo pool_info{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .queueFamilyIndex =
             device.get_queue_index(vkb::QueueType::compute).value(),
     };
 
-    if (disp.createCommandPool(&pool_info, nullptr, &command_pool) !=
-        VK_SUCCESS) {
-      std::cout << "failed to create command pool\n";
-      return -1;
+    if (const auto result =
+            disp.createCommandPool(&pool_info, nullptr, &command_pool);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot create command pool"};
     }
-    return 0;
   }
 
-  /**
-   * @brief Create a compute pipeline object
-   *
-   * @return int
-   */
-  [[nodiscard]] int create_compute_pipeline() {
+  void create_compute_pipeline() {
     // Load & Create Shader Modules (1/3)
     const auto compute_shader_code = readFile("shaders/morton.spv");
     const auto compute_module = create_shader_module(compute_shader_code);
-
-    if (compute_module == VK_NULL_HANDLE) {
-      std::cout << "failed to create shader module\n";
-      return -1;
-    }
 
     // Set constant IDs
     constexpr std::size_t num_of_entries = 3u;
@@ -321,10 +294,10 @@ protected:
         .pPushConstantRanges = &push_const,
     };
 
-    if (disp.createPipelineLayout(&layout_create_info, nullptr,
-                                  &compute_pipeline_layout) != VK_SUCCESS) {
-      std::cout << "failed to create pipeline layout\n";
-      return -1;
+    if (const auto result = disp.createPipelineLayout(
+            &layout_create_info, nullptr, &compute_pipeline_layout);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot create pipeline layout"};
     }
 
     // Pipeline itself (3/3)
@@ -337,22 +310,17 @@ protected:
         .basePipelineIndex = -1,
     };
 
-    if (disp.createComputePipelines(VK_NULL_HANDLE, 1, &pipeline_create_info,
-                                    nullptr, &compute_pipeline) != VK_SUCCESS) {
-      std::cout << "failed to create compute pipeline\n";
-      return -1;
+    if (const auto result = disp.createComputePipelines(
+            VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr,
+            &compute_pipeline);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot create compute pipeline"};
     }
 
     disp.destroyShaderModule(compute_module, nullptr);
-    return 0;
   }
 
-  /**
-   * @brief Create a descriptor pool object
-   *
-   * @return int
-   */
-  [[nodiscard]] int create_descriptor_pool() {
+  void create_descriptor_pool() {
     constexpr std::array<VkDescriptorPoolSize, 2> pool_sizes{
         VkDescriptorPoolSize{
             .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -372,21 +340,14 @@ protected:
         .pPoolSizes = pool_sizes.data(),
     };
 
-    if (disp.createDescriptorPool(&create_info, nullptr, &descriptor_pool) !=
-        VK_SUCCESS) {
-      std::cout << "failed to create descriptor pool\n";
-      return -1;
+    if (const auto result =
+            disp.createDescriptorPool(&create_info, nullptr, &descriptor_pool);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot create descriptor pool"};
     }
-    return 0;
   }
 
-  /**
-   * @brief Create a descriptor set object
-   *
-   * @param buffer
-   * @return int
-   */
-  [[nodiscard]] int create_descriptor_set() {
+  void create_descriptor_set() {
     const VkDescriptorSetAllocateInfo set_alloc_info{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = descriptor_pool,
@@ -394,10 +355,10 @@ protected:
         .pSetLayouts = &descriptor_set_layout,
     };
 
-    if (disp.allocateDescriptorSets(&set_alloc_info, &descriptor_set) !=
-        VK_SUCCESS) {
-      std::cout << "failed to allocate descriptor set\n";
-      return -1;
+    if (const auto result =
+            disp.allocateDescriptorSets(&set_alloc_info, &descriptor_set);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot allocate descriptor set"};
     }
 
     // Maybe combine into struct buffer
@@ -437,8 +398,6 @@ protected:
     };
 
     disp.updateDescriptorSets(2, write.data(), 0, nullptr);
-
-    return 0;
   }
 
   // /**
@@ -515,22 +474,11 @@ protected:
   //   return 0;
   // }
 
-  /**
-   * @brief Write data to buffer
-   *
-   * @param h_data host data
-   * @param n size of data
-   * @return int
-   */
-  int write_data_to_buffer(const InputT *h_data, const size_t n) {
-    // memcpy(alloc_info[0].pMappedData, h_data, sizeof(InputT) * n);
-
+  void write_data_to_buffer(const InputT *h_data, const size_t n) {
     usm_buffers[0].update(h_data, sizeof(InputT) * n, 0);
-
-    return 0;
   }
 
-  [[nodiscard]] int execute_sync() {
+  void execute_sync() {
     const VkCommandBufferAllocateInfo cmd_buf_alloc_info{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = command_pool,
@@ -538,10 +486,10 @@ protected:
         .commandBufferCount = 1,
     };
 
-    if (disp.allocateCommandBuffers(&cmd_buf_alloc_info, &command_buffer) !=
-        VK_SUCCESS) {
-      std::cout << "failed to allocate command buffers\n";
-      return -1;
+    if (const auto result =
+            disp.allocateCommandBuffers(&cmd_buf_alloc_info, &command_buffer);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot allocate command buffer"};
     }
 
     // ------- RECORD COMMAND BUFFER --------
@@ -581,18 +529,17 @@ protected:
         .signalSemaphoreCount = 0,
     };
 
-    if (vkQueueSubmit(compute_queue, 1, &submit_info, VK_NULL_HANDLE) !=
-        VK_SUCCESS) {
-      std::cout << "failed to submit queue\n";
-      return -1;
+    if (const auto result =
+            disp.queueSubmit(compute_queue, 1, &submit_info, VK_NULL_HANDLE);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot submit queue"};
     }
 
     // wait the calculation to finish
-    if (vkQueueWaitIdle(compute_queue) != VK_SUCCESS) {
-      throw std::runtime_error("failed to wait queue idle!");
+    if (const auto result = disp.queueWaitIdle(compute_queue);
+        result != VK_SUCCESS) {
+      throw VulkanException{result, "Cannot wait queue idle"};
     }
-
-    return 0;
   }
 
 public:
@@ -601,8 +548,6 @@ public:
   // std::array<VkBuffer, 2> buffers;
   // std::array<VmaAllocationInfo, 2> alloc_info; // to access the mapped memory
 
-  // std::array<std::unique_ptr<Buffer>, 2> usm_buffers;
-  // std::array<Buffer *, 2> usm_buffers;
   std::array<Buffer, 2> usm_buffers;
 
   // Command Related

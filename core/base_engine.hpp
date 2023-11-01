@@ -4,7 +4,6 @@
 
 #include "../vma_usage.h"
 #include "VkBootstrap.h"
-#include "utils.hpp"
 
 namespace core {
 
@@ -15,8 +14,8 @@ extern VmaAllocator allocator;
 class BaseEngine {
 public:
   BaseEngine() {
-    vk_check(device_initialization());
-    vk_check(get_queues());
+    device_initialization();
+    get_queues();
     vma_initialization();
   }
 
@@ -29,7 +28,7 @@ public:
   }
 
 private:
-  [[nodiscard]] int device_initialization() {
+  void device_initialization() {
     // Vulkan instance creation (1/3)
     vkb::InstanceBuilder instance_builder;
     auto inst_ret = instance_builder.set_app_name("Example Vulkan Application")
@@ -40,7 +39,7 @@ private:
     if (!inst_ret) {
       std::cerr << "Failed to create Vulkan instance. Error: "
                 << inst_ret.error().message() << "\n";
-      return -1;
+      throw std::runtime_error("Failed to create Vulkan instance");
     }
 
     instance = inst_ret.value();
@@ -58,7 +57,7 @@ private:
     if (!phys_ret) {
       std::cerr << "Failed to select Vulkan Physical Device. Error: "
                 << phys_ret.error().message() << "\n";
-      return -1;
+      throw std::runtime_error("Failed to select Vulkan Physical Device");
     }
     std::cout << "selected GPU: " << phys_ret.value().properties.deviceName
               << '\n';
@@ -69,23 +68,21 @@ private:
     if (!dev_ret) {
       std::cerr << "Failed to create Vulkan device. Error: "
                 << dev_ret.error().message() << "\n";
-      return -1;
+      throw std::runtime_error("Failed to create Vulkan device");
     }
 
     device = dev_ret.value();
     disp = device.make_table();
-    return 0;
   }
 
-  [[nodiscard]] int get_queues() {
+  void get_queues() {
     auto q_ret = device.get_queue(vkb::QueueType::compute);
     if (!q_ret.has_value()) {
       std::cout << "failed to get compute queue: " << q_ret.error().message()
                 << "\n";
-      return -1;
+      throw std::runtime_error("Failed to get compute queue");
     }
     compute_queue = q_ret.value();
-    return 0;
   }
 
   void vma_initialization() {
@@ -112,7 +109,7 @@ protected:
   vkb::Instance instance;
   vkb::Device device;
   vkb::DispatchTable disp;
-  VkQueue compute_queue; // queues (vector of queues)
+  VkQueue compute_queue;
 };
 
 } // namespace core
