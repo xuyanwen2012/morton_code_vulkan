@@ -28,17 +28,7 @@ uint encode(uint i, uint j, uint k) {
 __kernel void foo(__global float4 *in_xyz, __global uint *out,
                   const struct MyPushConstant push_constant) {
   const uint kCodeLen = 31;
-  // static_assert(1 + 1 == 2, "kCodeLen must be divisible by 3");
 
-  float x, y, z;
-  uint i, j, k;
-
-  uint bit_scale;
-  float bit_scale_f;
-
-  // uint n = 1024;
-  // float min_coord = 0.0f;
-  // float range = 1024.0f;
   uint n = push_constant.n;
   float min_coord = push_constant.min_coord;
   float range = push_constant.range;
@@ -49,15 +39,15 @@ __kernel void foo(__global float4 *in_xyz, __global uint *out,
 
   // printf("index: %d\n", index);
 
-  x = in_xyz[index].x;
-  y = in_xyz[index].y;
-  z = in_xyz[index].z;
-  bit_scale = 0xFFFFFFFFu >> (32 - (kCodeLen / 3)); // 1023
-  bit_scale_f = convert_float(bit_scale);           // 1023
+  float x = in_xyz[index].x;
+  float y = in_xyz[index].y;
+  float z = in_xyz[index].z;
+  uint bit_scale = 0xFFFFFFFFu >> (32 - (kCodeLen / 3)); // 1023
+  float bit_scale_f = convert_float(bit_scale);          // 1023
 
-  i = convert_uint(bit_scale_f * ((x - min_coord) / range));
-  j = convert_uint(bit_scale_f * ((y - min_coord) / range));
-  k = convert_uint(bit_scale_f * ((z - min_coord) / range));
+  uint i = convert_uint(bit_scale_f * ((x - min_coord) / range));
+  uint j = convert_uint(bit_scale_f * ((y - min_coord) / range));
+  uint k = convert_uint(bit_scale_f * ((z - min_coord) / range));
 
   out[index] = encode(i, j, k);
 }

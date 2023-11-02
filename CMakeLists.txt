@@ -6,15 +6,8 @@ add_subdirectory(vk-bootstrap)
 find_package(Vulkan REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 
-add_executable(
-  VulkanTest
-  main.cpp
-  vma_usage.cpp
-  vma_usage.h
-  core/error.cpp
-  core/error.hpp
-  core/base_engine.hpp
-  core/utils.hpp)
+add_executable(VulkanTest main.cpp vma_usage.cpp core/error.cpp core/error.hpp
+                          core/base_engine.hpp)
 
 target_compile_features(VulkanTest PRIVATE cxx_std_20)
 

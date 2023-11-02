@@ -2,8 +2,8 @@
 
 #include <iostream>
 
-#include "../vma_usage.h"
 #include "VkBootstrap.h"
+#include "vk_mem_alloc.h"
 
 namespace core {
 
@@ -90,15 +90,9 @@ private:
       return;
     }
 
-    constexpr VmaVulkanFunctions vulkan_functions{
-        .vkGetInstanceProcAddr = &vkGetInstanceProcAddr,
-        .vkGetDeviceProcAddr = &vkGetDeviceProcAddr,
-    };
-
     const VmaAllocatorCreateInfo allocator_create_info{
         .physicalDevice = device.physical_device,
         .device = device.device,
-        .pVulkanFunctions = &vulkan_functions,
         .instance = instance.instance,
     };
 

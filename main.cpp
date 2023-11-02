@@ -8,7 +8,9 @@
 
 #include "file_reader.hpp"
 #include "moton.hpp"
-#include "vma_usage.h"
+
+#include "vk_mem_alloc.h"
+
 #include <glm/glm.hpp>
 
 #include "core/base_engine.hpp"
@@ -129,6 +131,23 @@ public:
   std::byte *mapped_data{nullptr};
   VkDeviceMemory memory{VK_NULL_HANDLE};
   VkDeviceSize size{0};
+};
+
+// Each GPU function is a kernel, it needs its own pipeline
+//
+// vkCreateComputePipelines
+//   - VkComputePipelineCreateInfo
+//     - VkPipelineShaderStageCreateInfo
+//       - VkSpecializationInfo
+//       - Shader Module
+//   - vkCreatePipelineLayout
+//     - VkPipelineLayoutCreateInfo
+//       - Descriptor Set Layout
+//       - Push Constants
+//
+struct ComputeKernel {
+  VkPipeline pipeline;
+  VkPipelineLayout pipelineLayout;
 };
 
 class ComputeEngine : public core::BaseEngine {
@@ -566,7 +585,7 @@ public:
 
 }; // namespace core
 
-std::ostream &operator<<(std::ostream &os, const glm::vec4 &vec) {
+std::ostream &operator<<(std::ostream &os, const glm::vec3 &vec) {
   os << "(" << vec.x << ", " << vec.y << ", " << vec.z << ")";
   return os;
 }
