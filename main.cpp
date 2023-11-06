@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -110,6 +111,7 @@ public:
   VkDeviceMemory get_memory() const { return memory; }
   VkDeviceSize get_size() const { return size; };
   const std::byte *get_data() const { return mapped_data; }
+  std::byte *get_data_mut() { return mapped_data; }
 
   void update(const std::vector<std::byte> &data, size_t offset) {
     update(data.data(), data.size(), offset);
@@ -156,16 +158,12 @@ public:
     create_descriptor_set_layout();
     create_descriptor_pool();
 
-    // usm_buffers[0] = std::make_unique<Buffer>(InputSize() * sizeof(InputT));
-    // usm_buffers[1] = std::make_unique<Buffer>(InputSize() * sizeof(OutputT));
-    // vk_check(create_storage_buffer());
-
-    // usm_buffers.push_back(std::move(MYBuffer(InputSize() * sizeof(InputT))));
-    // usm_buffers.push_back(std::move(MYBuffer(InputSize() *
-    // sizeof(OutputT))));
-
-    usm_buffers[0].init(InputSize() * sizeof(InputT));
-    usm_buffers[1].init(InputSize() * sizeof(OutputT));
+    // usm_buffers[0].init(InputSize() * sizeof(InputT));
+    // usm_buffers[1].init(InputSize() * sizeof(OutputT));
+    usm_buffers.emplace_back(
+        std::make_unique<Buffer>(InputSize() * sizeof(InputT)));
+    usm_buffers.emplace_back(
+        std::make_unique<Buffer>(InputSize() * sizeof(OutputT)));
 
     create_descriptor_set();
     create_compute_pipeline();
@@ -382,14 +380,16 @@ protected:
 
     // Maybe combine into struct buffer
     const VkDescriptorBufferInfo in_buffer_info{
-        .buffer = usm_buffers[0].buf,
+        .buffer = usm_buffers[0]->buf,
+        // .buffer = usm_buffers[0].buf,
         // .buffer = buffers[0],
         .offset = 0,
         .range = InputSize() * sizeof(InputT),
     };
 
     const VkDescriptorBufferInfo out_buffer_info{
-        .buffer = usm_buffers[1].buf, // why not [1]?
+        .buffer = usm_buffers[1]->buf,
+        // .buffer = usm_buffers[1].buf,
         // .buffer = buffers[1],
         .offset = 0,
         .range = InputSize() * sizeof(OutputT),
@@ -494,7 +494,7 @@ protected:
   // }
 
   void write_data_to_buffer(const InputT *h_data, const size_t n) {
-    usm_buffers[0].update(h_data, sizeof(InputT) * n, 0);
+    usm_buffers[0]->update(h_data, sizeof(InputT) * n, 0);
   }
 
   void execute_sync() {
@@ -567,7 +567,7 @@ public:
   // std::array<VkBuffer, 2> buffers;
   // std::array<VmaAllocationInfo, 2> alloc_info; // to access the mapped memory
 
-  std::array<Buffer, 2> usm_buffers;
+  std::vector<std::unique_ptr<Buffer>> usm_buffers;
 
   // Command Related
   VkCommandPool command_pool;
@@ -624,7 +624,11 @@ int main() {
   // reinterpret_cast<OutputT *>(engine.alloc_info[1].pMappedData);
 
   auto output_data =
-      reinterpret_cast<const OutputT *>(engine.usm_buffers[1].get_data());
+      reinterpret_cast<OutputT *>(engine.usm_buffers[1]->get_data_mut());
+
+  // now using std sort to sort the output
+  // std::sort(output_data, output_data + InputSize());
+  // std::ranges::sort(output_data);
 
   std::cout << "Output:\n";
   for (size_t i = 0; i < 10; ++i) {

@@ -1,4 +1,4 @@
-// RUN: lspv --spv-version=1.5 --cl-std=CLC++ -inline-entry-points morton.cl -o
+// RUN: clspv --spv-version=1.5 --cl-std=CLC++ -inline-entry-points morton.cl -o
 // morton.spv
 // RUN: clspv-reflection --target-env spv1.5 morton.spv
 
