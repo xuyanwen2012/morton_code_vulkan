@@ -606,8 +606,12 @@ void ShowAvailableExtensions() {
 
 int main() {
   // Prepare data
+  constexpr auto min_coord = 0.0f;
+  constexpr auto max_coord = 1024.0f;
+  constexpr auto range = max_coord - min_coord;
+
   std::default_random_engine gen(114514);
-  std::uniform_real_distribution<float> dis(0.0f, 1024.0f);
+  std::uniform_real_distribution<float> dis(min_coord, range);
 
   std::vector<InputT> h_data2(InputSize());
   std::ranges::generate(
@@ -633,10 +637,10 @@ int main() {
   std::cout << "Output:\n";
   for (size_t i = 0; i < 10; ++i) {
 
-    const auto code = PointToCode(h_data2[i]);
+    const auto cpu_result = PointToCode32(h_data2[i], min_coord, range);
 
     std::cout << i << ":\t" << h_data2[i] << "\t" << output_data[i];
-    std::cout << '\t' << code;
+    std::cout << '\t' << cpu_result;
     std::cout << '\n';
   }
 
